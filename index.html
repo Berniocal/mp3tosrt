@@ -6,268 +6,54 @@
   <title>MP3 → SRT</title>
   <meta name="description" content="Lokální přepis MP3 do SRT pomocí Whisperu v prohlížeči.">
   <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #eef2f7;
-      --card: #ffffff;
-      --soft: #f7f9fc;
-      --text: #172033;
-      --muted: #657087;
-      --line: #d8deea;
-      --accent: #315ee7;
-      --ok: #17834c;
-      --warn: #9a5d00;
-      --err: #b42318;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0d1220;
-        --card: #171e2e;
-        --soft: #111827;
-        --text: #edf2ff;
-        --muted: #aab4ca;
-        --line: #303a51;
-        --accent: #7698ff;
-        --ok: #60d394;
-        --warn: #ffc66d;
-        --err: #ff8e86;
-      }
-    }
-
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: Inter, system-ui, sans-serif;
-    }
-    main {
-      width: min(1120px, calc(100% - 28px));
-      margin: auto;
-      padding: 34px 0 60px;
-    }
-    h1 { font-size: clamp(2rem, 5vw, 3.3rem); margin: 0 0 6px; }
-    h2 { font-size: 1.15rem; margin: 0 0 14px; }
-    .lead, .muted { color: var(--muted); }
-    .lead { margin: 0 0 22px; }
-    .grid {
-      display: grid;
-      grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
-      gap: 18px;
-      align-items: start;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 20px;
-      padding: 20px;
-      box-shadow: 0 18px 50px #0002;
-    }
-    .stack { display: grid; gap: 14px; }
-    .drop {
-      display: grid;
-      place-items: center;
-      min-height: 170px;
-      padding: 24px;
-      text-align: center;
-      border: 2px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
-      border-radius: 16px;
-      background: var(--soft);
-      cursor: pointer;
-    }
-    .drop.drag { border-color: var(--accent); }
-    .drop strong { display: block; margin-bottom: 6px; }
-    .drop span { color: var(--muted); font-size: .92rem; }
-    #file { display: none; }
-    .filebox {
-      display: none;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--soft);
-      overflow-wrap: anywhere;
-    }
-    audio { width: 100%; margin-top: 9px; }
-    .form {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-    label.field { display: grid; gap: 6px; color: var(--muted); font-size: .88rem; }
-    select, input, textarea {
-      width: 100%;
-      font: inherit;
-      color: var(--text);
-      background: var(--soft);
-      border: 1px solid var(--line);
-      border-radius: 11px;
-    }
-    select, input { min-height: 44px; padding: 8px 10px; }
-    textarea { min-height: 390px; padding: 14px; resize: vertical; line-height: 1.48; }
-    button {
-      min-height: 44px;
-      padding: 10px 15px;
-      border: 0;
-      border-radius: 11px;
-      font: 700 .95rem system-ui;
-      cursor: pointer;
-    }
-    button:disabled { opacity: .48; cursor: not-allowed; }
-    .primary { background: var(--accent); color: #fff; }
-    .secondary { background: var(--soft); color: var(--text); border: 1px solid var(--line); }
-    .status, .progressbox {
-      padding: 13px 14px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--soft);
-    }
-    .status { min-height: 68px; color: var(--muted); }
-    .status[data-kind="ok"] { color: var(--ok); }
-    .status[data-kind="warn"] { color: var(--warn); }
-    .status[data-kind="error"] { color: var(--err); }
-    .progressbox { display: grid; gap: 8px; }
-    .progresshead { display: flex; justify-content: space-between; align-items: baseline; }
-    .percent { font-size: 1.5rem; color: var(--accent); font-variant-numeric: tabular-nums; }
-    progress { width: 100%; height: 15px; accent-color: var(--accent); }
-    .small { font-size: .84rem; color: var(--muted); margin: 0; }
-    .hidden { display: none !important; }
-    .outhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .tabs, .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
-    .tab.active { background: var(--accent); color: #fff; }
-    .buttons { margin-top: 12px; }
-    .buttons button { flex: 1 1 140px; }
-    .badge {
-      display: inline-block;
-      margin-top: 5px;
-      padding: 4px 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--muted);
-      font-size: .78rem;
-    }
-    details { border-top: 1px solid var(--line); padding-top: 12px; }
-    summary { cursor: pointer; font-weight: 700; }
-    details p { margin-bottom: 0; }
-
-    @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
-    @media (max-width: 520px) {
-      .form { grid-template-columns: 1fr; }
-      .card { padding: 15px; }
-      .outhead { align-items: flex-start; flex-direction: column; gap: 10px; }
-    }
+    :root{color-scheme:light dark;--bg:#eef2f7;--card:#fff;--soft:#f7f9fc;--text:#172033;--muted:#657087;--line:#d8deea;--accent:#315ee7;--ok:#17834c;--warn:#9a5d00;--err:#b42318}
+    @media(prefers-color-scheme:dark){:root{--bg:#0d1220;--card:#171e2e;--soft:#111827;--text:#edf2ff;--muted:#aab4ca;--line:#303a51;--accent:#7698ff;--ok:#60d394;--warn:#ffc66d;--err:#ff8e86}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}main{width:min(1120px,calc(100% - 28px));margin:auto;padding:34px 0 60px}h1{font-size:clamp(2rem,5vw,3.3rem);margin:0 0 6px}h2{font-size:1.15rem;margin:0 0 14px}.lead,.muted{color:var(--muted)}.lead{margin:0 0 22px}.grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:18px;align-items:start}.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;box-shadow:0 18px 50px #0002}.stack{display:grid;gap:14px}.drop{display:grid;place-items:center;min-height:170px;padding:24px;text-align:center;border:2px dashed color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:16px;background:var(--soft);cursor:pointer}.drop.drag{border-color:var(--accent)}.drop strong{display:block;margin-bottom:6px}.drop span{color:var(--muted);font-size:.92rem}#file{display:none}.filebox{display:none;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--soft);overflow-wrap:anywhere}audio{width:100%;margin-top:9px}.form{display:grid;grid-template-columns:1fr 1fr;gap:12px}label.field{display:grid;gap:6px;color:var(--muted);font-size:.88rem}select,input,textarea{width:100%;font:inherit;color:var(--text);background:var(--soft);border:1px solid var(--line);border-radius:11px}select,input{min-height:44px;padding:8px 10px}textarea{min-height:390px;padding:14px;resize:vertical;line-height:1.48}button{min-height:44px;padding:10px 15px;border:0;border-radius:11px;font:700 .95rem system-ui;cursor:pointer}button:disabled{opacity:.48;cursor:not-allowed}.primary{background:var(--accent);color:#fff}.secondary{background:var(--soft);color:var(--text);border:1px solid var(--line)}.status,.progressbox{padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:var(--soft)}.status{min-height:68px;color:var(--muted)}.status[data-kind="ok"]{color:var(--ok)}.status[data-kind="warn"]{color:var(--warn)}.status[data-kind="error"]{color:var(--err)}.progressbox{display:grid;gap:8px}.progresshead{display:flex;justify-content:space-between;align-items:baseline}.percent{font-size:1.5rem;color:var(--accent);font-variant-numeric:tabular-nums}progress{width:100%;height:15px;accent-color:var(--accent)}.small{font-size:.84rem;color:var(--muted);margin:0}.hidden{display:none!important}.outhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.tabs,.buttons{display:flex;gap:8px;flex-wrap:wrap}.tab.active{background:var(--accent);color:#fff}.buttons{margin-top:12px}.buttons button{flex:1 1 140px}.badge{display:inline-block;margin-top:5px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.78rem}details{border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;font-weight:700}details p{margin-bottom:0}@media(max-width:820px){.grid{grid-template-columns:1fr}}@media(max-width:520px){.form{grid-template-columns:1fr}.card{padding:15px}.outhead{align-items:flex-start;flex-direction:column;gap:10px}}
   </style>
 </head>
 <body>
   <main>
     <h1>MP3 → SRT</h1>
     <p class="lead">Bezplatný lokální přepis pomocí Whisperu. Zvuk zůstává v počítači; z internetu se stáhne jen knihovna a model.</p>
-
     <div class="grid">
       <section class="card stack">
         <h2>1. Zvuk a nastavení</h2>
-
-        <label class="drop" id="drop" for="file">
-          <div>
-            <strong>Vyber MP3 nebo ho sem přetáhni</strong>
-            <span>Podporovány jsou také WAV, M4A, OGG a FLAC.</span>
-          </div>
-        </label>
+        <label class="drop" id="drop" for="file"><div><strong>Vyber MP3 nebo ho sem přetáhni</strong><span>Podporovány jsou také WAV, M4A, OGG a FLAC.</span></div></label>
         <input id="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac">
-
-        <div class="filebox" id="filebox">
-          <strong id="filename"></strong>
-          <div class="small" id="filemeta"></div>
-          <audio id="preview" controls></audio>
-        </div>
-
+        <div class="filebox" id="filebox"><strong id="filename"></strong><div class="small" id="filemeta"></div><audio id="preview" controls></audio></div>
         <div class="form">
           <label class="field">Model
             <select id="model">
-              <option value="onnx-community/whisper-tiny">Tiny – nejrychlejší</option>
-              <option value="onnx-community/whisper-base" selected>Base – doporučeno</option>
-              <option value="onnx-community/whisper-small">Small – nejpřesnější, náročný</option>
+              <option value="onnx-community/whisper-tiny-ONNX">Tiny – nejrychlejší</option>
+              <option value="onnx-community/whisper-base-ONNX" selected>Base – doporučeno</option>
+              <option value="onnx-community/whisper-small-ONNX">Small – nejpřesnější, náročný</option>
             </select>
           </label>
-
           <label class="field">Jazyk nahrávky
-            <select id="language">
-              <option value="slovak" selected>Slovenština</option>
-              <option value="czech">Čeština</option>
-              <option value="">Automaticky rozpoznat</option>
-            </select>
+            <select id="language"><option value="slovak" selected>Slovenština</option><option value="czech">Čeština</option><option value="">Automaticky rozpoznat</option></select>
           </label>
-
           <label class="field">Výpočet
-            <select id="device">
-              <option value="auto" selected>Automaticky – stabilní</option>
-              <option value="webgpu">WebGPU – rychlejší, experimentální</option>
-              <option value="wasm">WASM – procesor</option>
-            </select>
+            <select id="device"><option value="auto" selected>Automaticky – stabilní</option><option value="webgpu">WebGPU – rychlejší, experimentální</option><option value="wasm">WASM – procesor</option></select>
           </label>
-
           <label class="field">Max. délka titulku
-            <select id="maxdur">
-              <option value="4.5">4,5 sekundy</option>
-              <option value="5.5" selected>5,5 sekundy</option>
-              <option value="7">7 sekund</option>
-            </select>
+            <select id="maxdur"><option value="4.5">4,5 sekundy</option><option value="5.5" selected>5,5 sekundy</option><option value="7">7 sekund</option></select>
           </label>
-
-          <label class="field">Znaků na řádek
-            <input id="chars" type="number" min="24" max="60" value="42">
-          </label>
-
-          <label class="field">Řádků v titulku
-            <select id="lines">
-              <option value="1">1 řádek</option>
-              <option value="2" selected>2 řádky</option>
-            </select>
-          </label>
+          <label class="field">Znaků na řádek<input id="chars" type="number" min="24" max="60" value="42"></label>
+          <label class="field">Řádků v titulku<select id="lines"><option value="1">1 řádek</option><option value="2" selected>2 řádky</option></select></label>
         </div>
-
         <button class="primary" id="start" disabled>Vytvořit titulky</button>
         <div class="status" id="status">Vyber zvukový soubor.</div>
-
-        <div class="progressbox hidden" id="progressbox">
-          <div class="progresshead">
-            <strong id="stage">Příprava</strong>
-            <strong class="percent" id="percent">0 %</strong>
-          </div>
-          <progress id="progress" max="100" value="0"></progress>
-          <p class="small" id="detail">Čekám na spuštění.</p>
-        </div>
-
-        <details>
-          <summary>Co je dobré vědět</summary>
-          <p class="small">Automatický režim používá stabilnější procesorový backend WASM. WebGPU může být rychlejší, ale při chybě nebo nesmyslném opakování se přepis automaticky zopakuje přes WASM. Text i SRT se doplňují průběžně po každém úseku.</p>
-        </details>
+        <div class="progressbox hidden" id="progressbox"><div class="progresshead"><strong id="stage">Příprava</strong><strong class="percent" id="percent">0 %</strong></div><progress id="progress" max="100" value="0"></progress><p class="small" id="detail">Čekám na spuštění.</p></div>
+        <details><summary>Co je dobré vědět</summary><p class="small">Aplikace používá novější kompatibilní ONNX exporty modelů. Automatický režim používá stabilnější WASM. Text i SRT se doplňují průběžně po každém úseku.</p></details>
       </section>
-
       <section class="card">
-        <div class="outhead">
-          <div>
-            <h2>2. Výsledek</h2>
-            <span class="badge" id="count">0 titulků</span>
-          </div>
-          <div class="tabs">
-            <button class="secondary tab active" id="srtTab" type="button">SRT</button>
-            <button class="secondary tab" id="txtTab" type="button">Čistý text</button>
-          </div>
-        </div>
-
+        <div class="outhead"><div><h2>2. Výsledek</h2><span class="badge" id="count">0 titulků</span></div><div class="tabs"><button class="secondary tab active" id="srtTab" type="button">SRT</button><button class="secondary tab" id="txtTab" type="button">Čistý text</button></div></div>
         <textarea id="srt" placeholder="Zde se budou průběžně objevovat časované titulky…"></textarea>
         <textarea id="txt" class="hidden" placeholder="Zde se bude průběžně objevovat přepis…"></textarea>
-
-        <div class="buttons">
-          <button class="primary" id="saveSrt" disabled>Stáhnout SRT</button>
-          <button class="secondary" id="saveTxt" disabled>Stáhnout TXT</button>
-          <button class="secondary" id="copy" disabled>Kopírovat</button>
-        </div>
+        <div class="buttons"><button class="primary" id="saveSrt" disabled>Stáhnout SRT</button><button class="secondary" id="saveTxt" disabled>Stáhnout TXT</button><button class="secondary" id="copy" disabled>Kopírovat</button></div>
       </section>
     </div>
   </main>
-
-  <script type="module" src="./app.js?v=20260728-3"></script>
+  <script type="module" src="./app.js?v=20260728-4"></script>
 </body>
 </html>
