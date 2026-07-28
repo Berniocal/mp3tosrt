@@ -154,7 +154,7 @@
       if (error instanceof BackendRetryError) throw error;
       console.warn('Vadný úsek byl přeskočen, přepis pokračuje:', error);
       result = { text: '', chunks: [], skipped: true };
-      setStatus(\`Část ${index + 1} z ${totalChunks} se nepodařila opravit a byla přeskočena. Přepis pokračuje.\`, 'warn');
+      setStatus('Část ' + (index + 1) + ' z ' + totalChunks + ' se nepodařila opravit a byla přeskočena. Přepis pokračuje.', 'warn');
     }`
       ]
     ];
