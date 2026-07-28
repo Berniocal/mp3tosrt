@@ -38,7 +38,7 @@
         <button class="primary" id="start" disabled>Vytvořit titulky</button>
         <div class="status" id="status">Vyber zvukový soubor.</div>
         <div class="progressbox hidden" id="progressbox"><div class="progresshead"><strong id="stage">Příprava</strong><strong class="percent" id="percent">0 %</strong></div><progress id="progress" max="100" value="0"></progress><p class="small" id="detail">Čekám na spuštění.</p></div>
-        <details><summary>Co je dobré vědět</summary><p class="small">Stabilní režim používá nekvantované ONNX váhy, protože některé q8 exporty Whisperu způsobovaly chybu při načítání dekodéru. První stažení modelu Base je proto větší. Text i SRT se doplňují průběžně.</p></details>
+        <details><summary>Co je dobré vědět</summary><p class="small">Zůstává zachovaný dobře fungující model Base a stejné časování. Když některý úsek začne opakovat stejný výraz, aplikace ho zkusí po menších částech; pokud se neopraví, přeskočí jen tento vadný úsek a pokračuje dál.</p></details>
       </section>
       <section class="card">
         <div class="outhead"><div><h2>2. Výsledek</h2><span class="badge" id="count">0 titulků</span></div><div class="tabs"><button class="secondary tab active" id="srtTab" type="button">SRT</button><button class="secondary tab" id="txtTab" type="button">Čistý text</button></div></div>
@@ -75,6 +75,103 @@
       };
     })();
   </script>
-  <script type="module" src="./app.js?v=20260728-5"></script>
+  <script type="module">
+    const response = await fetch('./app.js?v=20260728-5');
+    let source = await response.text();
+
+    const patches = [
+      [
+`  } catch (error) {
+    if (error instanceof DegenerateOutputError) {
+      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
+      throw error;
+    }
+    if (!isRecoverableDecodeError(error)) throw error;
+    timestampError = error;
+  }`,
+`  } catch (error) {
+    if (error instanceof DegenerateOutputError) {
+      console.warn('Opakující se výstup s časováním; zkouším bezpečnější režim a menší části:', error);
+      timestampError = error;
+    } else {
+      if (!isRecoverableDecodeError(error)) throw error;
+      timestampError = error;
+    }
+  }`
+      ],
+      [
+`  } catch (error) {
+    if (error instanceof DegenerateOutputError) {
+      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
+      throw error;
+    }
+    if (!isRecoverableDecodeError(error)) throw error;
+    if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
+  }`,
+`  } catch (error) {
+    if (error instanceof DegenerateOutputError) {
+      console.warn('Opakující se výstup bez časování; dělím úsek na menší části:', error);
+    } else {
+      if (!isRecoverableDecodeError(error)) throw error;
+      if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
+    }
+  }`
+      ],
+      [
+`    const left = await transcribePiece(transcriber, audio.slice(0, midpoint), language, device, depth + 1);
+    const right = await transcribePiece(transcriber, audio.slice(midpoint), language, device, depth + 1);`,
+`    let left = { text: '', chunks: [] };
+    let right = { text: '', chunks: [] };
+    try {
+      left = await transcribePiece(transcriber, audio.slice(0, midpoint), language, device, depth + 1);
+    } catch (error) {
+      if (error instanceof BackendRetryError) throw error;
+      console.warn('První polovina vadného úseku byla přeskočena:', error);
+    }
+    try {
+      right = await transcribePiece(transcriber, audio.slice(midpoint), language, device, depth + 1);
+    } catch (error) {
+      if (error instanceof BackendRetryError) throw error;
+      console.warn('Druhá polovina vadného úseku byla přeskočena:', error);
+    }`
+      ],
+      [
+`    const result = await transcribePiece(
+      transcriber,
+      audio.slice(startSample, endSample),
+      language,
+      device,
+    );`,
+`    let result;
+    try {
+      result = await transcribePiece(
+        transcriber,
+        audio.slice(startSample, endSample),
+        language,
+        device,
+      );
+    } catch (error) {
+      if (error instanceof BackendRetryError) throw error;
+      console.warn('Vadný úsek byl přeskočen, přepis pokračuje:', error);
+      result = { text: '', chunks: [], skipped: true };
+      setStatus(\`Část ${index + 1} z ${totalChunks} se nepodařila opravit a byla přeskočena. Přepis pokračuje.\`, 'warn');
+    }`
+      ]
+    ];
+
+    for (const [from, to] of patches) {
+      if (!source.includes(from)) {
+        throw new Error('Bezpečnostní opravu nelze použít: očekávaná část app.js nebyla nalezena.');
+      }
+      source = source.replace(from, to);
+    }
+
+    const moduleUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    try {
+      await import(moduleUrl);
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  </script>
 </body>
 </html>
