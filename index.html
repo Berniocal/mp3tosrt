@@ -29,22 +29,16 @@
               <option value="onnx-community/whisper-small-ONNX">Small – nejpřesnější, náročný</option>
             </select>
           </label>
-          <label class="field">Jazyk nahrávky
-            <select id="language"><option value="slovak" selected>Slovenština</option><option value="czech">Čeština</option><option value="">Automaticky rozpoznat</option></select>
-          </label>
-          <label class="field">Výpočet
-            <select id="device"><option value="auto" selected>Automaticky – stabilní</option><option value="webgpu">WebGPU – rychlejší, experimentální</option><option value="wasm">WASM – procesor</option></select>
-          </label>
-          <label class="field">Max. délka titulku
-            <select id="maxdur"><option value="4.5">4,5 sekundy</option><option value="5.5" selected>5,5 sekundy</option><option value="7">7 sekund</option></select>
-          </label>
+          <label class="field">Jazyk nahrávky<select id="language"><option value="slovak" selected>Slovenština</option><option value="czech">Čeština</option><option value="">Automaticky rozpoznat</option></select></label>
+          <label class="field">Výpočet<select id="device"><option value="auto" selected>Automaticky – stabilní</option><option value="webgpu">WebGPU – rychlejší, experimentální</option><option value="wasm">WASM – procesor</option></select></label>
+          <label class="field">Max. délka titulku<select id="maxdur"><option value="4.5">4,5 sekundy</option><option value="5.5" selected>5,5 sekundy</option><option value="7">7 sekund</option></select></label>
           <label class="field">Znaků na řádek<input id="chars" type="number" min="24" max="60" value="42"></label>
           <label class="field">Řádků v titulku<select id="lines"><option value="1">1 řádek</option><option value="2" selected>2 řádky</option></select></label>
         </div>
         <button class="primary" id="start" disabled>Vytvořit titulky</button>
         <div class="status" id="status">Vyber zvukový soubor.</div>
         <div class="progressbox hidden" id="progressbox"><div class="progresshead"><strong id="stage">Příprava</strong><strong class="percent" id="percent">0 %</strong></div><progress id="progress" max="100" value="0"></progress><p class="small" id="detail">Čekám na spuštění.</p></div>
-        <details><summary>Co je dobré vědět</summary><p class="small">Aplikace používá novější kompatibilní ONNX exporty modelů. Automatický režim používá stabilnější WASM. Text i SRT se doplňují průběžně po každém úseku.</p></details>
+        <details><summary>Co je dobré vědět</summary><p class="small">Stabilní režim používá nekvantované ONNX váhy, protože některé q8 exporty Whisperu způsobovaly chybu při načítání dekodéru. První stažení modelu Base je proto větší. Text i SRT se doplňují průběžně.</p></details>
       </section>
       <section class="card">
         <div class="outhead"><div><h2>2. Výsledek</h2><span class="badge" id="count">0 titulků</span></div><div class="tabs"><button class="secondary tab active" id="srtTab" type="button">SRT</button><button class="secondary tab" id="txtTab" type="button">Čistý text</button></div></div>
@@ -54,6 +48,33 @@
       </section>
     </div>
   </main>
-  <script type="module" src="./app.js?v=20260728-4"></script>
+  <script>
+    // Transformers.js 4 volí pro WASM standardně q8. Některé Whisper q8 grafy
+    // mají vadnou QDQ škálu a ONNX Runtime kvůli tomu nevytvoří session.
+    // Pro požadavky na kvantované Whisper váhy proto transparentně načteme
+    // odpovídající nekvantovaný ONNX graf. App.js ani přepis se tím nemění.
+    (() => {
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const sourceUrl = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+        if (!sourceUrl || !sourceUrl.includes('/onnx-community/whisper-')) {
+          return originalFetch(input, init);
+        }
+
+        const safeUrl = sourceUrl
+          .replace(/_(?:quantized|int8|uint8)\.onnx(?=\?|$)/i, '.onnx')
+          .replace(/_q8\.onnx(?=\?|$)/i, '.onnx');
+
+        if (safeUrl === sourceUrl) return originalFetch(input, init);
+        console.info('Whisper: načítám stabilní ONNX graf místo q8:', safeUrl.split('/').pop());
+
+        if (input instanceof Request) {
+          return originalFetch(new Request(safeUrl, input), init);
+        }
+        return originalFetch(safeUrl, init);
+      };
+    })();
+  </script>
+  <script type="module" src="./app.js?v=20260728-5"></script>
 </body>
 </html>
