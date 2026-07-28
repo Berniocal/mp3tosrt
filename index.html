@@ -169,7 +169,28 @@
     .status[data-kind="warn"] { color: var(--warn); }
     .status[data-kind="error"] { color: var(--error); }
 
-    progress { width: 100%; height: 13px; margin-top: 9px; accent-color: var(--accent); }
+    progress { width: 100%; height: 15px; accent-color: var(--accent); }
+    .progress-panel {
+      display: grid;
+      gap: 8px;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-soft);
+    }
+    .progress-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .progress-stage { color: var(--text); font-weight: 700; }
+    .progress-percent {
+      color: var(--accent);
+      font-size: 1.35rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
     .small { margin: 0; color: var(--muted); font-size: .84rem; }
     .output-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
     .output-head h2 { margin: 0; }
@@ -287,9 +308,15 @@
 
         <button id="startButton" class="primary" disabled>Vytvořit titulky</button>
 
-        <div class="status" id="status" role="status" aria-live="polite">
-          Vyber zvukový soubor. Při prvním použití se stáhne model; při dalších spuštěních jej prohlížeč obvykle načte z mezipaměti.
-          <progress id="progress" value="0" max="100" hidden></progress>
+        <div class="status" id="status" role="status" aria-live="polite">Vyber zvukový soubor. Při prvním použití se stáhne model; při dalších spuštěních jej prohlížeč obvykle načte z mezipaměti.</div>
+
+        <div class="progress-panel hidden" id="progressPanel" aria-live="polite">
+          <div class="progress-top">
+            <span class="progress-stage" id="progressStage">Příprava</span>
+            <strong class="progress-percent" id="progressLabel">0 %</strong>
+          </div>
+          <progress id="progress" value="0" max="100"></progress>
+          <p class="small" id="progressDetail">Čekám na spuštění.</p>
         </div>
 
         <details>
@@ -333,6 +360,10 @@
     env.allowLocalModels = false;
     env.useBrowserCache = true;
 
+    const SAMPLE_RATE = 16000;
+    const TRANSCRIPTION_CHUNK_SECONDS = 25;
+    const TRANSCRIPTION_OVERLAP_SECONDS = 1.5;
+
     const $ = (id) => document.getElementById(id);
     const audioFile = $('audioFile');
     const dropzone = $('dropzone');
@@ -342,7 +373,11 @@
     const audioPreview = $('audioPreview');
     const startButton = $('startButton');
     const statusBox = $('status');
+    const progressPanel = $('progressPanel');
     const progress = $('progress');
+    const progressStage = $('progressStage');
+    const progressLabel = $('progressLabel');
+    const progressDetail = $('progressDetail');
     const srtOutput = $('srtOutput');
     const txtOutput = $('txtOutput');
     const captionCount = $('captionCount');
@@ -360,22 +395,29 @@
     let audioDuration = 0;
 
     function setStatus(message, kind = '') {
-      statusBox.firstChild.textContent = message + ' ';
+      statusBox.textContent = message;
       statusBox.dataset.kind = kind;
     }
 
-    function showProgress(value = null) {
-      progress.hidden = false;
-      if (value === null) {
-        progress.removeAttribute('value');
-      } else {
-        progress.value = Math.max(0, Math.min(100, value));
-      }
+    function setProgress(value, stage = 'Pracuji', detail = '') {
+      const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
+      progressPanel.classList.remove('hidden');
+      progress.value = safeValue;
+      progressStage.textContent = stage;
+      progressLabel.textContent = `${Math.round(safeValue)} %`;
+      progressDetail.textContent = detail || 'Probíhá zpracování…';
     }
 
-    function hideProgress() {
-      progress.hidden = true;
+    function finishProgress(stage = 'Hotovo', detail = 'Zpracování bylo dokončeno.') {
+      setProgress(100, stage, detail);
+    }
+
+    function resetProgress() {
+      progressPanel.classList.add('hidden');
       progress.value = 0;
+      progressStage.textContent = 'Příprava';
+      progressLabel.textContent = '0 %';
+      progressDetail.textContent = 'Čekám na spuštění.';
     }
 
     function prettyBytes(bytes) {
@@ -394,7 +436,9 @@
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
       const s = Math.floor(seconds % 60);
-      return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+      return h
+        ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        : `${m}:${String(s).padStart(2, '0')}`;
     }
 
     function setFile(file) {
@@ -412,6 +456,7 @@
       fileMeta.textContent = prettyBytes(file.size);
       fileInfo.style.display = 'block';
       startButton.disabled = false;
+      resetProgress();
       setStatus('Soubor je připraven. Zvol nastavení a spusť přepis.');
     }
 
@@ -450,7 +495,10 @@
 
     async function loadTranscriber(modelId, device) {
       const key = `${modelId}|${device}`;
-      if (currentPipeline && currentPipelineKey === key) return currentPipeline;
+      if (currentPipeline && currentPipelineKey === key) {
+        finishProgress('Model je připraven', 'Model byl načten z paměti této stránky.');
+        return currentPipeline;
+      }
 
       if (currentPipeline?.dispose) {
         try { await currentPipeline.dispose(); } catch (_) {}
@@ -459,23 +507,24 @@
       currentPipelineKey = '';
 
       setStatus(`Načítám model ${modelId.split('/').pop()}…`);
-      showProgress(0);
+      setProgress(0, 'Načítám model', 'Při prvním spuštění se model stahuje z internetu.');
 
       const progressByFile = new Map();
       const progressCallback = (data) => {
         if (data.status === 'progress' && typeof data.progress === 'number') {
-          progressByFile.set(data.file ?? String(progressByFile.size), data.progress);
+          const fileKey = data.file ?? data.name ?? String(progressByFile.size);
+          progressByFile.set(fileKey, data.progress);
           const values = [...progressByFile.values()];
           const average = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
-          showProgress(average);
+          setProgress(average, 'Stahuji model', `${Math.round(average)} % stažených částí modelu`);
           setStatus(`Stahuji model: ${Math.round(average)} %`);
         } else if (data.status === 'ready') {
+          finishProgress('Model je připraven', 'Model je načtený a může začít přepis.');
           setStatus('Model je připraven.');
         }
       };
 
       const options = { device, progress_callback: progressCallback };
-      // Kvantizace šetří paměť. Při nekompatibilitě se načtení zopakuje bez ní.
       try {
         currentPipeline = await pipeline('automatic-speech-recognition', modelId, {
           ...options,
@@ -483,47 +532,51 @@
         });
       } catch (firstError) {
         console.warn('Načtení zvoleného datového typu selhalo, zkouším výchozí:', firstError);
+        setStatus('První způsob načtení modelu selhal, zkouším kompatibilní variantu…', 'warn');
         currentPipeline = await pipeline('automatic-speech-recognition', modelId, options);
       }
 
       currentPipelineKey = key;
-      hideProgress();
+      finishProgress('Model je připraven', 'Model je načtený. Následuje příprava zvuku.');
       return currentPipeline;
     }
 
     async function decodeAudioTo16kMono(file) {
       setStatus('Načítám a převádím zvuk na 16 kHz…');
-      showProgress(null);
+      setProgress(0, 'Připravuji zvuk', `Načítám ${prettyBytes(file.size)} do paměti.`);
 
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) throw new Error('Prohlížeč nepodporuje Web Audio API. Použij aktuální Chrome nebo Edge.');
 
       let context;
       try {
-        context = new AudioContextClass({ sampleRate: 16000 });
+        context = new AudioContextClass({ sampleRate: SAMPLE_RATE });
       } catch (_) {
         context = new AudioContextClass();
       }
 
       const buffer = await file.arrayBuffer();
+      setProgress(35, 'Připravuji zvuk', 'Dekóduji MP3. U dlouhé nahrávky to může chvíli trvat.');
       const decoded = await context.decodeAudioData(buffer.slice(0));
       const channels = decoded.numberOfChannels;
       const sourceLength = decoded.length;
       const mono = new Float32Array(sourceLength);
 
+      setProgress(65, 'Připravuji zvuk', `Převádím ${channels === 1 ? 'mono' : `${channels} kanály`} do jednoho kanálu.`);
       for (let channel = 0; channel < channels; channel++) {
         const data = decoded.getChannelData(channel);
         for (let i = 0; i < sourceLength; i++) mono[i] += data[i] / channels;
       }
 
       let output = mono;
-      if (decoded.sampleRate !== 16000) {
-        output = resampleLinear(mono, decoded.sampleRate, 16000);
+      if (decoded.sampleRate !== SAMPLE_RATE) {
+        setProgress(82, 'Připravuji zvuk', `Převádím ${decoded.sampleRate} Hz na ${SAMPLE_RATE} Hz.`);
+        output = resampleLinear(mono, decoded.sampleRate, SAMPLE_RATE);
       }
 
-      audioDuration = output.length / 16000;
+      audioDuration = output.length / SAMPLE_RATE;
       await context.close();
-      hideProgress();
+      finishProgress('Zvuk je připraven', `${prettyTime(audioDuration)} zvuku je připraveno k přepisu.`);
       return output;
     }
 
@@ -575,7 +628,6 @@
 
       if (lines.length <= lineCount) return lines.join('\n');
 
-      // Když by vzniklo příliš mnoho řádků, vyváží text pouze do požadovaného počtu.
       const targetLength = Math.ceil(cleaned.length / lineCount);
       const balanced = [];
       current = '';
@@ -592,27 +644,79 @@
       return balanced.join('\n');
     }
 
-    function normalizeWordChunks(chunks) {
+    function normalizeSegmentChunks(chunks, chunkStart, chunkEnd, acceptFrom) {
       const normalized = [];
-      let lastEnd = 0;
+      let lastEnd = chunkStart;
 
       for (const chunk of chunks ?? []) {
         const text = cleanText(chunk.text);
         if (!text) continue;
 
-        const timestamp = Array.isArray(chunk.timestamp) ? chunk.timestamp : [lastEnd, null];
-        let start = Number.isFinite(timestamp[0]) ? timestamp[0] : lastEnd;
-        let end = Number.isFinite(timestamp[1]) ? timestamp[1] : start + Math.max(.35, text.length / 14);
-        start = Math.max(0, start);
-        end = Math.max(start + .05, end);
+        const timestamp = Array.isArray(chunk.timestamp) ? chunk.timestamp : [0, null];
+        let start = Number.isFinite(timestamp[0]) ? chunkStart + timestamp[0] : lastEnd;
+        let end = Number.isFinite(timestamp[1]) ? chunkStart + timestamp[1] : Math.min(chunkEnd, start + Math.max(0.8, text.length / 13));
+        start = Math.max(chunkStart, start);
+        end = Math.min(chunkEnd, Math.max(start + 0.08, end));
+
+        // U překryvu zahodíme segmenty, které patří hlavně do předchozí části.
+        if (end <= acceptFrom || (start < acceptFrom && (start + end) / 2 <= acceptFrom)) continue;
+        start = Math.max(start, acceptFrom);
         lastEnd = end;
         normalized.push({ text, start, end });
       }
       return normalized;
     }
 
+    function removeRepeatedBoundary(previousText, currentText) {
+      const previousWords = cleanText(previousText).split(' ').filter(Boolean);
+      const currentWords = cleanText(currentText).split(' ').filter(Boolean);
+      const max = Math.min(12, previousWords.length, currentWords.length);
+
+      for (let count = max; count >= 2; count--) {
+        const suffix = previousWords.slice(-count).join(' ').toLocaleLowerCase('cs');
+        const prefix = currentWords.slice(0, count).join(' ').toLocaleLowerCase('cs');
+        if (suffix === prefix) return currentWords.slice(count).join(' ');
+      }
+      return currentWords.join(' ');
+    }
+
+    function mergeSegments(target, additions) {
+      for (const addition of additions) {
+        const previous = target[target.length - 1];
+        if (previous && addition.start <= previous.end + 1.5) {
+          addition.text = removeRepeatedBoundary(previous.text, addition.text);
+        }
+        addition.text = cleanText(addition.text);
+        if (!addition.text) continue;
+        if (previous && addition.start < previous.end) addition.start = Math.max(previous.start + 0.05, previous.end - 0.05);
+        if (addition.end <= addition.start) addition.end = addition.start + 0.5;
+        target.push(addition);
+      }
+    }
+
+    function segmentsToEstimatedWords(segments) {
+      const words = [];
+      for (const segment of segments) {
+        const pieces = cleanText(segment.text).split(/\s+/).filter(Boolean);
+        if (!pieces.length) continue;
+        const duration = Math.max(0.4, segment.end - segment.start);
+        const weights = pieces.map((word) => Math.max(1, word.replace(/[^\p{L}\p{N}]/gu, '').length));
+        const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+        let cursor = segment.start;
+
+        pieces.forEach((word, index) => {
+          const isLast = index === pieces.length - 1;
+          const wordDuration = duration * (weights[index] / totalWeight);
+          const end = isLast ? segment.end : Math.min(segment.end, cursor + wordDuration);
+          words.push({ text: word, start: cursor, end: Math.max(cursor + 0.04, end) });
+          cursor = end;
+        });
+      }
+      return words;
+    }
+
     function buildCaptionsFromWords(wordChunks, settings) {
-      const words = normalizeWordChunks(wordChunks);
+      const words = wordChunks ?? [];
       const captions = [];
       const maxChars = settings.charsPerLine * settings.lineCount;
       let current = null;
@@ -621,7 +725,7 @@
         if (!current) return;
         captions.push({
           start: current.start,
-          end: Math.max(current.end, current.start + .65),
+          end: Math.max(current.end, current.start + 0.65),
           text: wrapCaption(current.text, settings.charsPerLine, settings.lineCount),
         });
         current = null;
@@ -650,10 +754,9 @@
       }
       flush();
 
-      // Omezí překryvy a příliš krátké zobrazení.
       for (let i = 0; i < captions.length; i++) {
         const next = captions[i + 1];
-        if (next) captions[i].end = Math.min(captions[i].end, Math.max(captions[i].start + .35, next.start - .04));
+        if (next) captions[i].end = Math.min(captions[i].end, Math.max(captions[i].start + 0.35, next.start - 0.04));
       }
       return captions;
     }
@@ -682,12 +785,96 @@
           }
         }
         if (buffer) {
-          const share = Math.max(.8, estimated * (buffer.length / Math.max(1, part.length)));
+          const share = Math.max(0.8, estimated * (buffer.length / Math.max(1, part.length)));
           captions.push({ start: cursor, end: cursor + share, text: wrapCaption(buffer, settings.charsPerLine, settings.lineCount) });
           cursor += share;
         }
       }
       return captions;
+    }
+
+    async function transcribeAudioInChunks(transcriber, audio, language) {
+      const chunkSamples = Math.round(TRANSCRIPTION_CHUNK_SECONDS * SAMPLE_RATE);
+      const overlapSamples = Math.round(TRANSCRIPTION_OVERLAP_SECONDS * SAMPLE_RATE);
+      const stepSamples = chunkSamples - overlapSamples;
+      const totalChunks = Math.max(1, Math.ceil(Math.max(1, audio.length - overlapSamples) / stepSamples));
+      const segments = [];
+      const textParts = [];
+
+      for (let index = 0; index < totalChunks; index++) {
+        const startSample = index * stepSamples;
+        if (startSample >= audio.length) break;
+        const endSample = Math.min(audio.length, startSample + chunkSamples);
+        const chunkStart = startSample / SAMPLE_RATE;
+        const chunkEnd = endSample / SAMPLE_RATE;
+        const completedBefore = (chunkStart / audioDuration) * 100;
+
+        setProgress(
+          completedBefore,
+          'Přepisuji zvuk',
+          `${prettyTime(chunkStart)} z ${prettyTime(audioDuration)} • část ${index + 1} z ${totalChunks}`,
+        );
+        setStatus(`Přepisuji část ${index + 1} z ${totalChunks} (${Math.round(completedBefore)} %)… Nezavírej tuto kartu.`);
+
+        const chunkAudio = audio.slice(startSample, endSample);
+        const options = {
+          task: 'transcribe',
+          return_timestamps: true,
+          force_full_sequences: false,
+        };
+        if (language) options.language = language;
+
+        let result;
+        try {
+          result = await transcriber(chunkAudio, options);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          // Nouzový režim pro modely, které neumějí segmentové časové značky.
+          if (/timestamp|attention/i.test(message)) {
+            console.warn('Časové značky nejsou podporované, přepisuji část bez nich:', error);
+            result = await transcriber(chunkAudio, {
+              task: 'transcribe',
+              ...(language ? { language } : {}),
+            });
+          } else {
+            throw error;
+          }
+        }
+
+        const resultText = cleanText(result?.text);
+        const acceptFrom = index === 0 ? chunkStart : chunkStart + TRANSCRIPTION_OVERLAP_SECONDS;
+        let chunkSegments = normalizeSegmentChunks(result?.chunks, chunkStart, chunkEnd, acceptFrom);
+
+        if (!chunkSegments.length && resultText) {
+          chunkSegments = [{
+            text: resultText,
+            start: acceptFrom,
+            end: chunkEnd,
+          }];
+        }
+
+        if (resultText) {
+          const previousText = textParts[textParts.length - 1] ?? '';
+          const deduplicated = previousText ? removeRepeatedBoundary(previousText, resultText) : resultText;
+          if (deduplicated) textParts.push(deduplicated);
+        }
+        mergeSegments(segments, chunkSegments);
+
+        const completedAfter = (chunkEnd / audioDuration) * 100;
+        setProgress(
+          completedAfter,
+          'Přepisuji zvuk',
+          `${prettyTime(chunkEnd)} z ${prettyTime(audioDuration)} • hotovo ${index + 1} z ${totalChunks} částí`,
+        );
+
+        // Uvolnění hlavního vlákna pro překreslení procent a lišty.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      return {
+        text: cleanText(textParts.join(' ')),
+        segments,
+      };
     }
 
     function formatSrtTime(seconds) {
@@ -726,9 +913,9 @@
     function setBusy(busy) {
       startButton.disabled = busy || !selectedFile;
       audioFile.disabled = busy;
-      $('model').disabled = busy;
-      $('language').disabled = busy;
-      $('device').disabled = busy;
+      for (const id of ['model', 'language', 'device', 'maxDuration', 'charsPerLine', 'lineCount']) {
+        $(id).disabled = busy;
+      }
     }
 
     startButton.addEventListener('click', async () => {
@@ -753,22 +940,11 @@
 
         const transcriber = await loadTranscriber(modelId, device);
         const audio = await decodeAudioTo16kMono(selectedFile);
+        const result = await transcribeAudioInChunks(transcriber, audio, language);
 
-        setStatus(`Přepisuji ${prettyTime(audioDuration)} zvuku pomocí ${device.toUpperCase()}… Nezavírej tuto kartu.`);
-        showProgress(null);
-
-        const options = {
-          task: 'transcribe',
-          return_timestamps: 'word',
-          chunk_length_s: 30,
-          stride_length_s: 5,
-          force_full_sequences: false,
-        };
-        if (language) options.language = language;
-
-        const result = await transcriber(audio, options);
-        const plainText = cleanText(result.text);
-        let captions = buildCaptionsFromWords(result.chunks, settings);
+        const plainText = cleanText(result.text || result.segments.map((segment) => segment.text).join(' '));
+        const estimatedWords = segmentsToEstimatedWords(result.segments);
+        let captions = buildCaptionsFromWords(estimatedWords, settings);
         if (!captions.length && plainText) captions = buildFallbackCaptions(plainText, audioDuration, settings);
         if (!plainText && !captions.length) throw new Error('Model nevrátil žádný text. Zkus jiný model nebo zkontroluj hlasitost nahrávky.');
 
@@ -778,12 +954,13 @@
         downloadSrt.disabled = !srtOutput.value;
         downloadTxt.disabled = !txtOutput.value;
         copyButton.disabled = false;
-        hideProgress();
+        finishProgress('Hotovo', `Přepsáno ${prettyTime(audioDuration)} zvuku a vytvořeno ${captions.length} titulků.`);
         setStatus(`Hotovo. Vytvořeno ${captions.length} časovaných titulků. Výsledek můžeš ručně opravit a stáhnout.`, 'ok');
       } catch (error) {
         console.error(error);
-        hideProgress();
         const message = error instanceof Error ? error.message : String(error);
+        progressStage.textContent = 'Přepis selhal';
+        progressDetail.textContent = message;
         setStatus(`Přepis se nepodařil: ${message}`, 'error');
       } finally {
         setBusy(false);
