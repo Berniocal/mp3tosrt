@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MP3 → SRT | Lokální přepis</title>
+  <meta name="description" content="Bezplatný lokální přepis MP3 do SRT pomocí Whisperu přímo v prohlížeči.">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #eef2f7;
+      --panel: #ffffff;
+      --panel-soft: #f7f9fc;
+      --text: #172033;
+      --muted: #657087;
+      --line: #d8deea;
+      --accent: #315ee7;
+      --accent-hover: #244bc1;
+      --ok: #17834c;
+      --warn: #9a5d00;
+      --error: #b42318;
+      --shadow: 0 18px 50px rgba(21, 34, 66, .10);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1220;
+        --panel: #171e2e;
+        --panel-soft: #111827;
+        --text: #edf2ff;
+        --muted: #aab4ca;
+        --line: #303a51;
+        --accent: #7698ff;
+        --accent-hover: #96afff;
+        --ok: #60d394;
+        --warn: #ffc66d;
+        --error: #ff8e86;
+        --shadow: 0 18px 50px rgba(0, 0, 0, .30);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 34rem),
+        var(--bg);
+    }
+
+    main {
+      width: min(1120px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 38px 0 60px;
+    }
+
+    header { margin-bottom: 22px; }
+    h1 { margin: 0 0 7px; font-size: clamp(2rem, 5vw, 3.4rem); letter-spacing: -.045em; }
+    h2 { margin: 0 0 14px; font-size: 1.15rem; }
+    p { line-height: 1.55; }
+    .lead { margin: 0; max-width: 780px; color: var(--muted); font-size: 1.02rem; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .stack { display: grid; gap: 15px; }
+
+    .dropzone {
+      display: grid;
+      place-items: center;
+      min-height: 185px;
+      padding: 25px;
+      text-align: center;
+      border: 2px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+      border-radius: 16px;
+      background: var(--panel-soft);
+      transition: .18s ease;
+      cursor: pointer;
+    }
+
+    .dropzone:hover,
+    .dropzone.dragover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+      background: color-mix(in srgb, var(--accent) 7%, var(--panel-soft));
+    }
+
+    .dropzone strong { display: block; margin-bottom: 7px; font-size: 1.08rem; }
+    .dropzone span { color: var(--muted); font-size: .92rem; }
+    input[type="file"] { display: none; }
+
+    .file-info {
+      display: none;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      overflow-wrap: anywhere;
+    }
+
+    audio { width: 100%; margin-top: 10px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    label.field { display: grid; gap: 6px; color: var(--muted); font-size: .87rem; }
+
+    select, input[type="number"], textarea {
+      width: 100%;
+      color: var(--text);
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      font: inherit;
+    }
+
+    select, input[type="number"] { min-height: 43px; padding: 8px 10px; }
+    textarea { min-height: 370px; padding: 14px; resize: vertical; line-height: 1.48; tab-size: 2; }
+    select:focus, input:focus, textarea:focus { outline: 3px solid color-mix(in srgb, var(--accent) 23%, transparent); border-color: var(--accent); }
+
+    button {
+      min-height: 44px;
+      padding: 10px 15px;
+      border: 0;
+      border-radius: 11px;
+      font: 700 .95rem/1 system-ui, sans-serif;
+      cursor: pointer;
+      transition: .16s ease;
+    }
+
+    button:hover:not(:disabled) { transform: translateY(-1px); }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    .primary { background: var(--accent); color: white; }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .secondary { background: var(--panel-soft); color: var(--text); border: 1px solid var(--line); }
+
+    .button-row { display: flex; flex-wrap: wrap; gap: 9px; }
+    .button-row button { flex: 1 1 145px; }
+
+    .status {
+      min-height: 72px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    .status[data-kind="ok"] { color: var(--ok); }
+    .status[data-kind="warn"] { color: var(--warn); }
+    .status[data-kind="error"] { color: var(--error); }
+
+    progress { width: 100%; height: 13px; margin-top: 9px; accent-color: var(--accent); }
+    .small { margin: 0; color: var(--muted); font-size: .84rem; }
+    .output-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .output-head h2 { margin: 0; }
+    .tabs { display: flex; gap: 7px; }
+    .tab.active { background: var(--accent); color: white; border-color: transparent; }
+    .hidden { display: none !important; }
+
+    details {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+    summary { cursor: pointer; font-weight: 700; }
+    .notes { margin: 10px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.55; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--panel-soft);
+      font-size: .77rem;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 820px) {
+      main { padding-top: 24px; }
+      .grid { grid-template-columns: 1fr; }
+      textarea { min-height: 310px; }
+    }
+
+    @media (max-width: 520px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .card { padding: 15px; border-radius: 16px; }
+      .output-head { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>MP3 → SRT</h1>
+      <p class="lead">Bezplatný přepis zvuku pomocí modelu Whisper. Zvuk zůstává ve tvém počítači; z internetu se pouze stáhne knihovna a zvolený model.</p>
+    </header>
+
+    <div class="grid">
+      <section class="card stack" aria-labelledby="settings-title">
+        <h2 id="settings-title">1. Zvuk a nastavení</h2>
+
+        <label class="dropzone" id="dropzone" for="audioFile">
+          <div>
+            <strong>Vyber MP3 nebo ho sem přetáhni</strong>
+            <span>Podporovány jsou i WAV, M4A, OGG a další formáty, které umí prohlížeč přehrát.</span>
+          </div>
+        </label>
+        <input id="audioFile" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac">
+
+        <div class="file-info" id="fileInfo">
+          <strong id="fileName"></strong>
+          <div class="small" id="fileMeta"></div>
+          <audio id="audioPreview" controls></audio>
+        </div>
+
+        <div class="form-grid">
+          <label class="field">
+            Model
+            <select id="model">
+              <option value="onnx-community/whisper-tiny">Tiny – nejrychlejší</option>
+              <option value="onnx-community/whisper-base" selected>Base – doporučeno</option>
+              <option value="onnx-community/whisper-small">Small – nejpřesnější, náročný</option>
+            </select>
+          </label>
+
+          <label class="field">
+            Jazyk nahrávky
+            <select id="language">
+              <option value="slovak" selected>Slovenština</option>
+              <option value="czech">Čeština</option>
+              <option value="">Automaticky rozpoznat</option>
+            </select>
+          </label>
+
+          <label class="field">
+            Výpočet
+            <select id="device">
+              <option value="auto" selected>Automaticky</option>
+              <option value="webgpu">WebGPU – grafická karta</option>
+              <option value="wasm">WASM – procesor</option>
+            </select>
+          </label>
+
+          <label class="field">
+            Max. délka titulku
+            <select id="maxDuration">
+              <option value="4.5">4,5 sekundy</option>
+              <option value="5.5" selected>5,5 sekundy</option>
+              <option value="7">7 sekund</option>
+            </select>
+          </label>
+
+          <label class="field">
+            Znaků na řádek
+            <input id="charsPerLine" type="number" min="24" max="60" step="1" value="42">
+          </label>
+
+          <label class="field">
+            Řádků v titulku
+            <select id="lineCount">
+              <option value="1">1 řádek</option>
+              <option value="2" selected>2 řádky</option>
+            </select>
+          </label>
+        </div>
+
+        <button id="startButton" class="primary" disabled>Vytvořit titulky</button>
+
+        <div class="status" id="status" role="status" aria-live="polite">
+          Vyber zvukový soubor. Při prvním použití se stáhne model; při dalších spuštěních jej prohlížeč obvykle načte z mezipaměti.
+          <progress id="progress" value="0" max="100" hidden></progress>
+        </div>
+
+        <details>
+          <summary>Co je dobré vědět</summary>
+          <ul class="notes">
+            <li>Pro delší podcast doporučuji Edge nebo Chrome na počítači.</li>
+            <li>Base je rozumný kompromis. Small bývá přesnější, ale potřebuje výrazně více paměti.</li>
+            <li>První stažení modelu může být velké. Samotná MP3 se nikam neodesílá.</li>
+            <li>WebGPU je rychlejší, ale není dostupné na každém zařízení. Aplikace umí přepnout na procesor.</li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="card" aria-labelledby="output-title">
+        <div class="output-head">
+          <div>
+            <h2 id="output-title">2. Výsledek</h2>
+            <span class="badge" id="captionCount">0 titulků</span>
+          </div>
+          <div class="tabs" role="tablist">
+            <button class="secondary tab active" id="srtTab" type="button">SRT</button>
+            <button class="secondary tab" id="txtTab" type="button">Čistý text</button>
+          </div>
+        </div>
+
+        <textarea id="srtOutput" spellcheck="true" placeholder="Zde se objeví časované titulky…"></textarea>
+        <textarea id="txtOutput" class="hidden" spellcheck="true" placeholder="Zde se objeví čistý přepis…"></textarea>
+
+        <div class="button-row" style="margin-top: 12px;">
+          <button id="downloadSrt" class="primary" disabled>Stáhnout SRT</button>
+          <button id="downloadTxt" class="secondary" disabled>Stáhnout TXT</button>
+          <button id="copyButton" class="secondary" disabled>Kopírovat</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script type="module">
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+
+    env.allowLocalModels = false;
+    env.useBrowserCache = true;
+
+    const $ = (id) => document.getElementById(id);
+    const audioFile = $('audioFile');
+    const dropzone = $('dropzone');
+    const fileInfo = $('fileInfo');
+    const fileName = $('fileName');
+    const fileMeta = $('fileMeta');
+    const audioPreview = $('audioPreview');
+    const startButton = $('startButton');
+    const statusBox = $('status');
+    const progress = $('progress');
+    const srtOutput = $('srtOutput');
+    const txtOutput = $('txtOutput');
+    const captionCount = $('captionCount');
+    const downloadSrt = $('downloadSrt');
+    const downloadTxt = $('downloadTxt');
+    const copyButton = $('copyButton');
+    const srtTab = $('srtTab');
+    const txtTab = $('txtTab');
+
+    let selectedFile = null;
+    let previewUrl = null;
+    let currentPipeline = null;
+    let currentPipelineKey = '';
+    let activeTab = 'srt';
+    let audioDuration = 0;
+
+    function setStatus(message, kind = '') {
+      statusBox.firstChild.textContent = message + ' ';
+      statusBox.dataset.kind = kind;
+    }
+
+    function showProgress(value = null) {
+      progress.hidden = false;
+      if (value === null) {
+        progress.removeAttribute('value');
+      } else {
+        progress.value = Math.max(0, Math.min(100, value));
+      }
+    }
+
+    function hideProgress() {
+      progress.hidden = true;
+      progress.value = 0;
+    }
+
+    function prettyBytes(bytes) {
+      const units = ['B', 'kB', 'MB', 'GB'];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000;
+        unit++;
+      }
+      return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
+    }
+
+    function prettyTime(seconds) {
+      if (!Number.isFinite(seconds)) return 'neznámá délka';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    function setFile(file) {
+      if (!file) return;
+      if (!file.type.startsWith('audio/') && !/\.(mp3|wav|m4a|ogg|flac)$/i.test(file.name)) {
+        setStatus('Vybraný soubor nevypadá jako zvuk.', 'error');
+        return;
+      }
+
+      selectedFile = file;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(file);
+      audioPreview.src = previewUrl;
+      fileName.textContent = file.name;
+      fileMeta.textContent = prettyBytes(file.size);
+      fileInfo.style.display = 'block';
+      startButton.disabled = false;
+      setStatus('Soubor je připraven. Zvol nastavení a spusť přepis.');
+    }
+
+    audioFile.addEventListener('change', () => setFile(audioFile.files?.[0]));
+
+    for (const eventName of ['dragenter', 'dragover']) {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+    }
+
+    for (const eventName of ['dragleave', 'drop']) {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.remove('dragover');
+      });
+    }
+
+    dropzone.addEventListener('drop', (event) => setFile(event.dataTransfer.files?.[0]));
+
+    audioPreview.addEventListener('loadedmetadata', () => {
+      audioDuration = audioPreview.duration;
+      fileMeta.textContent = `${prettyBytes(selectedFile.size)} • ${prettyTime(audioDuration)}`;
+    });
+
+    function chooseDevice() {
+      const choice = $('device').value;
+      if (choice === 'wasm') return 'wasm';
+      if (choice === 'webgpu') {
+        if (!navigator.gpu) throw new Error('Tento prohlížeč nebo zařízení nepodporuje WebGPU. Zvol Automaticky nebo WASM.');
+        return 'webgpu';
+      }
+      return navigator.gpu ? 'webgpu' : 'wasm';
+    }
+
+    async function loadTranscriber(modelId, device) {
+      const key = `${modelId}|${device}`;
+      if (currentPipeline && currentPipelineKey === key) return currentPipeline;
+
+      if (currentPipeline?.dispose) {
+        try { await currentPipeline.dispose(); } catch (_) {}
+      }
+      currentPipeline = null;
+      currentPipelineKey = '';
+
+      setStatus(`Načítám model ${modelId.split('/').pop()}…`);
+      showProgress(0);
+
+      const progressByFile = new Map();
+      const progressCallback = (data) => {
+        if (data.status === 'progress' && typeof data.progress === 'number') {
+          progressByFile.set(data.file ?? String(progressByFile.size), data.progress);
+          const values = [...progressByFile.values()];
+          const average = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+          showProgress(average);
+          setStatus(`Stahuji model: ${Math.round(average)} %`);
+        } else if (data.status === 'ready') {
+          setStatus('Model je připraven.');
+        }
+      };
+
+      const options = { device, progress_callback: progressCallback };
+      // Kvantizace šetří paměť. Při nekompatibilitě se načtení zopakuje bez ní.
+      try {
+        currentPipeline = await pipeline('automatic-speech-recognition', modelId, {
+          ...options,
+          dtype: device === 'webgpu' ? 'fp16' : 'q8',
+        });
+      } catch (firstError) {
+        console.warn('Načtení zvoleného datového typu selhalo, zkouším výchozí:', firstError);
+        currentPipeline = await pipeline('automatic-speech-recognition', modelId, options);
+      }
+
+      currentPipelineKey = key;
+      hideProgress();
+      return currentPipeline;
+    }
+
+    async function decodeAudioTo16kMono(file) {
+      setStatus('Načítám a převádím zvuk na 16 kHz…');
+      showProgress(null);
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error('Prohlížeč nepodporuje Web Audio API. Použij aktuální Chrome nebo Edge.');
+
+      let context;
+      try {
+        context = new AudioContextClass({ sampleRate: 16000 });
+      } catch (_) {
+        context = new AudioContextClass();
+      }
+
+      const buffer = await file.arrayBuffer();
+      const decoded = await context.decodeAudioData(buffer.slice(0));
+      const channels = decoded.numberOfChannels;
+      const sourceLength = decoded.length;
+      const mono = new Float32Array(sourceLength);
+
+      for (let channel = 0; channel < channels; channel++) {
+        const data = decoded.getChannelData(channel);
+        for (let i = 0; i < sourceLength; i++) mono[i] += data[i] / channels;
+      }
+
+      let output = mono;
+      if (decoded.sampleRate !== 16000) {
+        output = resampleLinear(mono, decoded.sampleRate, 16000);
+      }
+
+      audioDuration = output.length / 16000;
+      await context.close();
+      hideProgress();
+      return output;
+    }
+
+    function resampleLinear(input, inputRate, outputRate) {
+      if (inputRate === outputRate) return input;
+      const ratio = inputRate / outputRate;
+      const outputLength = Math.max(1, Math.round(input.length / ratio));
+      const output = new Float32Array(outputLength);
+
+      for (let i = 0; i < outputLength; i++) {
+        const sourcePosition = i * ratio;
+        const left = Math.floor(sourcePosition);
+        const right = Math.min(left + 1, input.length - 1);
+        const fraction = sourcePosition - left;
+        output[i] = input[left] * (1 - fraction) + input[right] * fraction;
+      }
+      return output;
+    }
+
+    function cleanText(text) {
+      return String(text ?? '')
+        .replace(/\s+/g, ' ')
+        .replace(/\s+([,.;:!?])/g, '$1')
+        .trim();
+    }
+
+    function isSentenceEnd(text) {
+      return /[.!?…][”"')\]]?$/.test(text.trim());
+    }
+
+    function wrapCaption(text, charsPerLine, lineCount) {
+      const cleaned = cleanText(text);
+      if (lineCount === 1 || cleaned.length <= charsPerLine) return cleaned;
+
+      const words = cleaned.split(' ');
+      const lines = [];
+      let current = '';
+
+      for (const word of words) {
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length <= charsPerLine || !current) {
+          current = candidate;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) lines.push(current);
+
+      if (lines.length <= lineCount) return lines.join('\n');
+
+      // Když by vzniklo příliš mnoho řádků, vyváží text pouze do požadovaného počtu.
+      const targetLength = Math.ceil(cleaned.length / lineCount);
+      const balanced = [];
+      current = '';
+      for (const word of words) {
+        const candidate = current ? `${current} ${word}` : word;
+        if (balanced.length < lineCount - 1 && current && candidate.length > targetLength) {
+          balanced.push(current);
+          current = word;
+        } else {
+          current = candidate;
+        }
+      }
+      if (current) balanced.push(current);
+      return balanced.join('\n');
+    }
+
+    function normalizeWordChunks(chunks) {
+      const normalized = [];
+      let lastEnd = 0;
+
+      for (const chunk of chunks ?? []) {
+        const text = cleanText(chunk.text);
+        if (!text) continue;
+
+        const timestamp = Array.isArray(chunk.timestamp) ? chunk.timestamp : [lastEnd, null];
+        let start = Number.isFinite(timestamp[0]) ? timestamp[0] : lastEnd;
+        let end = Number.isFinite(timestamp[1]) ? timestamp[1] : start + Math.max(.35, text.length / 14);
+        start = Math.max(0, start);
+        end = Math.max(start + .05, end);
+        lastEnd = end;
+        normalized.push({ text, start, end });
+      }
+      return normalized;
+    }
+
+    function buildCaptionsFromWords(wordChunks, settings) {
+      const words = normalizeWordChunks(wordChunks);
+      const captions = [];
+      const maxChars = settings.charsPerLine * settings.lineCount;
+      let current = null;
+
+      const flush = () => {
+        if (!current) return;
+        captions.push({
+          start: current.start,
+          end: Math.max(current.end, current.start + .65),
+          text: wrapCaption(current.text, settings.charsPerLine, settings.lineCount),
+        });
+        current = null;
+      };
+
+      for (const word of words) {
+        if (!current) {
+          current = { ...word };
+          continue;
+        }
+
+        const candidate = cleanText(`${current.text} ${word.text}`);
+        const candidateDuration = word.end - current.start;
+        const tooLong = candidate.length > maxChars || candidateDuration > settings.maxDuration;
+
+        if (tooLong) flush();
+
+        if (!current) {
+          current = { ...word };
+        } else {
+          current.text = candidate;
+          current.end = word.end;
+        }
+
+        if (isSentenceEnd(current.text) && current.end - current.start >= 1.1) flush();
+      }
+      flush();
+
+      // Omezí překryvy a příliš krátké zobrazení.
+      for (let i = 0; i < captions.length; i++) {
+        const next = captions[i + 1];
+        if (next) captions[i].end = Math.min(captions[i].end, Math.max(captions[i].start + .35, next.start - .04));
+      }
+      return captions;
+    }
+
+    function buildFallbackCaptions(text, duration, settings) {
+      const parts = cleanText(text).split(/(?<=[.!?…])\s+/).filter(Boolean);
+      const totalChars = Math.max(1, parts.reduce((sum, part) => sum + part.length, 0));
+      let cursor = 0;
+      const captions = [];
+
+      for (const part of parts) {
+        const estimated = Math.max(1.2, duration * (part.length / totalChars));
+        const words = part.split(/\s+/);
+        let buffer = '';
+        const maxChars = settings.charsPerLine * settings.lineCount;
+
+        for (const word of words) {
+          const candidate = buffer ? `${buffer} ${word}` : word;
+          if (candidate.length > maxChars && buffer) {
+            const share = estimated * (buffer.length / Math.max(1, part.length));
+            captions.push({ start: cursor, end: cursor + share, text: wrapCaption(buffer, settings.charsPerLine, settings.lineCount) });
+            cursor += share;
+            buffer = word;
+          } else {
+            buffer = candidate;
+          }
+        }
+        if (buffer) {
+          const share = Math.max(.8, estimated * (buffer.length / Math.max(1, part.length)));
+          captions.push({ start: cursor, end: cursor + share, text: wrapCaption(buffer, settings.charsPerLine, settings.lineCount) });
+          cursor += share;
+        }
+      }
+      return captions;
+    }
+
+    function formatSrtTime(seconds) {
+      const totalMs = Math.max(0, Math.round(seconds * 1000));
+      const ms = totalMs % 1000;
+      const totalSeconds = Math.floor(totalMs / 1000);
+      const s = totalSeconds % 60;
+      const totalMinutes = Math.floor(totalSeconds / 60);
+      const m = totalMinutes % 60;
+      const h = Math.floor(totalMinutes / 60);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    }
+
+    function captionsToSrt(captions) {
+      return captions.map((caption, index) =>
+        `${index + 1}\n${formatSrtTime(caption.start)} --> ${formatSrtTime(caption.end)}\n${caption.text}`
+      ).join('\n\n');
+    }
+
+    function baseFileName() {
+      return (selectedFile?.name ?? 'prepis').replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, '_');
+    }
+
+    function downloadText(content, extension, mime) {
+      const blob = new Blob(['\ufeff', content], { type: `${mime};charset=utf-8` });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${baseFileName()}.${extension}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function setBusy(busy) {
+      startButton.disabled = busy || !selectedFile;
+      audioFile.disabled = busy;
+      $('model').disabled = busy;
+      $('language').disabled = busy;
+      $('device').disabled = busy;
+    }
+
+    startButton.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      setBusy(true);
+      downloadSrt.disabled = true;
+      downloadTxt.disabled = true;
+      copyButton.disabled = true;
+      srtOutput.value = '';
+      txtOutput.value = '';
+      captionCount.textContent = '0 titulků';
+
+      try {
+        const device = chooseDevice();
+        const modelId = $('model').value;
+        const language = $('language').value;
+        const settings = {
+          maxDuration: Number($('maxDuration').value),
+          charsPerLine: Number($('charsPerLine').value),
+          lineCount: Number($('lineCount').value),
+        };
+
+        const transcriber = await loadTranscriber(modelId, device);
+        const audio = await decodeAudioTo16kMono(selectedFile);
+
+        setStatus(`Přepisuji ${prettyTime(audioDuration)} zvuku pomocí ${device.toUpperCase()}… Nezavírej tuto kartu.`);
+        showProgress(null);
+
+        const options = {
+          task: 'transcribe',
+          return_timestamps: 'word',
+          chunk_length_s: 30,
+          stride_length_s: 5,
+          force_full_sequences: false,
+        };
+        if (language) options.language = language;
+
+        const result = await transcriber(audio, options);
+        const plainText = cleanText(result.text);
+        let captions = buildCaptionsFromWords(result.chunks, settings);
+        if (!captions.length && plainText) captions = buildFallbackCaptions(plainText, audioDuration, settings);
+        if (!plainText && !captions.length) throw new Error('Model nevrátil žádný text. Zkus jiný model nebo zkontroluj hlasitost nahrávky.');
+
+        srtOutput.value = captionsToSrt(captions);
+        txtOutput.value = plainText || captions.map((caption) => caption.text.replace(/\n/g, ' ')).join(' ');
+        captionCount.textContent = `${captions.length} ${captions.length === 1 ? 'titulek' : captions.length < 5 ? 'titulky' : 'titulků'}`;
+        downloadSrt.disabled = !srtOutput.value;
+        downloadTxt.disabled = !txtOutput.value;
+        copyButton.disabled = false;
+        hideProgress();
+        setStatus(`Hotovo. Vytvořeno ${captions.length} časovaných titulků. Výsledek můžeš ručně opravit a stáhnout.`, 'ok');
+      } catch (error) {
+        console.error(error);
+        hideProgress();
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(`Přepis se nepodařil: ${message}`, 'error');
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    downloadSrt.addEventListener('click', () => downloadText(srtOutput.value, 'srt', 'application/x-subrip'));
+    downloadTxt.addEventListener('click', () => downloadText(txtOutput.value, 'txt', 'text/plain'));
+
+    copyButton.addEventListener('click', async () => {
+      const value = activeTab === 'srt' ? srtOutput.value : txtOutput.value;
+      try {
+        await navigator.clipboard.writeText(value);
+        setStatus('Text byl zkopírován do schránky.', 'ok');
+      } catch (_) {
+        const area = activeTab === 'srt' ? srtOutput : txtOutput;
+        area.focus();
+        area.select();
+        document.execCommand('copy');
+        setStatus('Text byl zkopírován do schránky.', 'ok');
+      }
+    });
+
+    function switchTab(tab) {
+      activeTab = tab;
+      const isSrt = tab === 'srt';
+      srtOutput.classList.toggle('hidden', !isSrt);
+      txtOutput.classList.toggle('hidden', isSrt);
+      srtTab.classList.toggle('active', isSrt);
+      txtTab.classList.toggle('active', !isSrt);
+    }
+
+    srtTab.addEventListener('click', () => switchTab('srt'));
+    txtTab.addEventListener('click', () => switchTab('txt'));
+
+    window.addEventListener('beforeunload', () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    });
+  </script>
+</body>
+</html>
