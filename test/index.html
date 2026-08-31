@@ -201,7 +201,7 @@
           <label class="field">Výpočet
             <select id="device">
               <option value="auto" selected>Automaticky – stabilní</option>
-              <option value="webgpu">WebGPU – rychlejší, experimentální</option>
+              <option value="webgpu">WebGPU – rychlejší, FP16 test</option>
               <option value="wasm">WASM – procesor</option>
             </select>
           </label>
@@ -240,7 +240,7 @@
 
         <details>
           <summary>Co je dobré vědět</summary>
-          <p class="small">Automatický režim používá stabilnější procesorový backend WASM. WebGPU může být rychlejší, ale při chybě nebo nesmyslném opakování se přepis automaticky zopakuje přes WASM. Text i SRT se doplňují průběžně po každém úseku.</p>
+          <p class="small">Automatický režim používá stabilnější procesorový backend WASM. V testovacím režimu WebGPU se vadné Q4 ONNX grafy nahrazují FP16 grafy stejného modelu. Přepisová logika zůstává stejná jako ve stabilní verzi.</p>
         </details>
       </section>
 
@@ -268,6 +268,28 @@
     </div>
   </main>
 
-  <script type="module" src="./app.js?v=20260728-3"></script>
+  <script>
+    (() => {
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const sourceUrl = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+        const gpuSelected = document.getElementById('device')?.value === 'webgpu';
+
+        if (!gpuSelected || !sourceUrl || !sourceUrl.includes('/onnx-community/whisper-')) {
+          return originalFetch(input, init);
+        }
+
+        const fp16Url = sourceUrl.replace(/_q4\.onnx(?=\?|$)/i, '_fp16.onnx');
+        if (fp16Url === sourceUrl) return originalFetch(input, init);
+
+        console.info('Whisper WebGPU test: FP16 místo vadného Q4 grafu:', fp16Url.split('/').pop());
+        if (input instanceof Request) {
+          return originalFetch(new Request(fp16Url, input), init);
+        }
+        return originalFetch(fp16Url, init);
+      };
+    })();
+  </script>
+  <script type="module" src="./app.js?v=20260831-fp16"></script>
 </body>
 </html>
