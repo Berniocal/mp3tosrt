@@ -5,10 +5,10 @@ env.useBrowserCache = true;
 if ('useWasmCache' in env) env.useWasmCache = true;
 
 const SAMPLE_RATE = 16000;
-const CHUNK_SECONDS = 30;
-const OVERLAP_SECONDS = 1;
-const MIN_SPLIT_SECONDS = 7;
-const MAX_SPLIT_DEPTH = 1;
+const CHUNK_SECONDS = 25;
+const OVERLAP_SECONDS = 1.5;
+const MIN_SPLIT_SECONDS = 5.5;
+const MAX_SPLIT_DEPTH = 2;
 
 const $ = (id) => document.getElementById(id);
 const fileInput = $('file');
@@ -91,10 +91,9 @@ function prettyBytes(bytes) {
 
 function prettyTime(seconds) {
   if (!Number.isFinite(seconds)) return 'neznámá délka';
-  const safeSeconds = Math.max(0, seconds);
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const secs = Math.floor(safeSeconds % 60);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
   return hours
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
     : `${minutes}:${String(secs).padStart(2, '0')}`;
@@ -138,47 +137,18 @@ drop.addEventListener('drop', (event) => setFile(event.dataTransfer.files?.[0]))
 
 preview.addEventListener('loadedmetadata', () => {
   audioDuration = preview.duration;
-  if (selectedFile) {
-    fileMeta.textContent = `${prettyBytes(selectedFile.size)} • ${prettyTime(audioDuration)}`;
-  }
+  fileMeta.textContent = `${prettyBytes(selectedFile.size)} • ${prettyTime(audioDuration)}`;
 });
 
 function requestedDevice() {
   const selected = $('device').value;
-  if (selected === 'wasm') return 'wasm';
   if (selected === 'webgpu') {
     if (!navigator.gpu) {
       throw new Error('WebGPU není v tomto prohlížeči dostupné. Zvol Automaticky nebo WASM.');
     }
     return 'webgpu';
   }
-  return navigator.gpu ? 'webgpu' : 'wasm';
-}
-
-function dtypeCandidates(device) {
-  if (device === 'webgpu') {
-    return [
-      {
-        label: 'FP16 encoder + Q4 decoder',
-        dtype: { encoder_model: 'fp16', decoder_model_merged: 'q4' },
-      },
-      {
-        label: 'FP16',
-        dtype: { encoder_model: 'fp16', decoder_model_merged: 'fp16' },
-      },
-    ];
-  }
-
-  return [
-    {
-      label: 'FP32 encoder + Q4 decoder',
-      dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' },
-    },
-    {
-      label: 'FP32',
-      dtype: { encoder_model: 'fp32', decoder_model_merged: 'fp32' },
-    },
-  ];
+  return 'wasm';
 }
 
 async function disposePipeline() {
@@ -190,50 +160,31 @@ async function disposePipeline() {
 }
 
 async function loadTranscriber(modelId, device) {
-  const candidates = dtypeCandidates(device);
-  let lastError = null;
+  const key = `${modelId}|${device}`;
+  if (currentPipeline && currentPipelineKey === key) return currentPipeline;
 
-  for (let attempt = 0; attempt < candidates.length; attempt++) {
-    const candidate = candidates[attempt];
-    const key = `${modelId}|${device}|${JSON.stringify(candidate.dtype)}`;
-    if (currentPipeline && currentPipelineKey === key) return currentPipeline;
+  await disposePipeline();
+  setProgress(0, 'Načítám model', `Backend: ${device.toUpperCase()}`);
+  setStatus(`Načítám model přes ${device.toUpperCase()}…`);
 
-    await disposePipeline();
-    setProgress(0, 'Načítám model', `${device.toUpperCase()} • ${candidate.label}`);
-    setStatus(`Načítám model přes ${device.toUpperCase()}…`);
-
-    const progressByFile = new Map();
-    const progressCallback = (data) => {
-      if ((data.status === 'progress' || data.status === 'progress_total') && typeof data.progress === 'number') {
-        const keyName = data.file ?? data.name ?? `část-${progressByFile.size}`;
-        progressByFile.set(keyName, data.progress);
-        const values = [...progressByFile.values()];
-        const average = values.reduce((sum, item) => sum + item, 0) / Math.max(1, values.length);
-        setProgress(average, 'Stahuji model', `${Math.round(average)} % • ${device.toUpperCase()} • ${candidate.label}`);
-      }
-    };
-
-    try {
-      currentPipeline = await pipeline('automatic-speech-recognition', modelId, {
-        device,
-        dtype: candidate.dtype,
-        progress_callback: progressCallback,
-      });
-      currentPipelineKey = key;
-      setProgress(100, 'Model je připraven', `${device.toUpperCase()} • ${candidate.label}`);
-      return currentPipeline;
-    } catch (error) {
-      lastError = error;
-      currentPipeline = null;
-      currentPipelineKey = '';
-      console.warn(`Model se nepodařilo načíst jako ${candidate.label}:`, error);
-      if (attempt + 1 < candidates.length) {
-        setStatus(`Varianta ${candidate.label} nešla načíst. Zkouším přesnější kompatibilní váhy.`, 'warn');
-      }
+  const progressByFile = new Map();
+  const progressCallback = (data) => {
+    if ((data.status === 'progress' || data.status === 'progress_total') && typeof data.progress === 'number') {
+      const keyName = data.file ?? data.name ?? `část-${progressByFile.size}`;
+      progressByFile.set(keyName, data.progress);
+      const values = [...progressByFile.values()];
+      const average = values.reduce((sum, item) => sum + item, 0) / Math.max(1, values.length);
+      setProgress(average, 'Stahuji model', `${Math.round(average)} % • ${device.toUpperCase()}`);
     }
-  }
+  };
 
-  throw lastError ?? new Error(`Model se přes ${device.toUpperCase()} nepodařilo načíst.`);
+  currentPipeline = await pipeline('automatic-speech-recognition', modelId, {
+    device,
+    progress_callback: progressCallback,
+  });
+  currentPipelineKey = key;
+  setProgress(100, 'Model je připraven', `Backend: ${device.toUpperCase()}`);
+  return currentPipeline;
 }
 
 async function decodeAudio(file) {
@@ -322,7 +273,7 @@ function normalizedTokens(text) {
 
 function qualityReport(text) {
   const tokens = normalizedTokens(text);
-  if (tokens.length < 10) return { bad: false, reason: '', tokens: tokens.length };
+  if (tokens.length < 8) return { bad: false, reason: '', tokens: tokens.length };
 
   const counts = new Map();
   let longestRun = 1;
@@ -345,16 +296,16 @@ function qualityReport(text) {
   const uniqueRatio = counts.size / tokens.length;
   const singleRatio = singleCharacter / tokens.length;
 
-  if (longestRun >= 7) {
+  if (longestRun >= 6) {
     return { bad: true, reason: 'stejný výraz se opakuje mnohokrát za sebou', tokens: tokens.length };
   }
-  if (tokens.length >= 24 && dominantRatio >= 0.62 && uniqueRatio <= 0.22) {
-    return { bad: true, reason: 'jeden výraz nepřirozeně ovládl téměř celý úsek', tokens: tokens.length };
+  if (tokens.length >= 16 && dominantRatio >= 0.42 && uniqueRatio <= 0.32) {
+    return { bad: true, reason: 'jeden výraz tvoří nepřirozeně velkou část přepisu', tokens: tokens.length };
   }
-  if (tokens.length >= 24 && singleRatio >= 0.68 && uniqueRatio <= 0.35) {
+  if (tokens.length >= 20 && singleRatio >= 0.62 && uniqueRatio <= 0.35) {
     return { bad: true, reason: 'výstup tvoří převážně jednotlivá opakovaná písmena', tokens: tokens.length };
   }
-  if (tokens.length >= 30 && singleRatio >= 0.80) {
+  if (tokens.length >= 25 && singleRatio >= 0.75) {
     return { bad: true, reason: 'výstup tvoří téměř jen jednotlivá písmena', tokens: tokens.length };
   }
   return { bad: false, reason: '', tokens: tokens.length };
@@ -371,12 +322,6 @@ function isRecoverableDecodeError(error) {
   return /token_ids must be a non-empty array|timestamp|cross attentions?|ending timestamp|empty array/i.test(errorMessage(error));
 }
 
-function isSkippableChunkError(error) {
-  return error instanceof DegenerateOutputError
-    || isRecoverableDecodeError(error)
-    || /nedokázal přepsat slyšitelný úsek/i.test(errorMessage(error));
-}
-
 function transcriberOptions(language, timestamps) {
   const options = {
     task: 'transcribe',
@@ -390,8 +335,7 @@ function transcriberOptions(language, timestamps) {
 async function transcribePiece(transcriber, audio, language, device, depth = 0) {
   if (isSilent(audio)) return { text: '', chunks: [], silence: true };
 
-  let lastRecoverableError = null;
-
+  let timestampError = null;
   try {
     const result = await transcriber(audio, transcriberOptions(language, true));
     const text = cleanText(result?.text);
@@ -400,14 +344,16 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
       return result;
     }
   } catch (error) {
-    if (error instanceof DegenerateOutputError || isRecoverableDecodeError(error)) {
-      lastRecoverableError = error;
-      console.warn('Přepis s časováním nebyl použitelný, zkouším bezpečnější variantu:', error);
-    } else if (device === 'webgpu') {
-      throw new BackendRetryError('WebGPU selhalo při přepisu úseku.', error);
-    } else {
+    if (error instanceof DegenerateOutputError) {
+      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
       throw error;
     }
+    if (!isRecoverableDecodeError(error)) throw error;
+    timestampError = error;
+  }
+
+  if (device === 'webgpu' && timestampError && /token_ids must be a non-empty array/i.test(errorMessage(timestampError))) {
+    throw new BackendRetryError('WebGPU vrátil prázdné tokeny.', timestampError);
   }
 
   try {
@@ -418,68 +364,44 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
       return result;
     }
   } catch (error) {
-    if (error instanceof DegenerateOutputError || isRecoverableDecodeError(error)) {
-      lastRecoverableError = error;
-      console.warn('Přepis bez časování nebyl použitelný, zkouším menší části:', error);
-    } else if (device === 'webgpu') {
-      throw new BackendRetryError('WebGPU selhalo při dekódování úseku.', error);
-    } else {
+    if (error instanceof DegenerateOutputError) {
+      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
       throw error;
     }
+    if (!isRecoverableDecodeError(error)) throw error;
+    if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
   }
 
   const minimumSamples = Math.round(MIN_SPLIT_SECONDS * SAMPLE_RATE);
   if (depth < MAX_SPLIT_DEPTH && audio.length >= minimumSamples * 2) {
     const midpoint = Math.floor(audio.length / 2);
-    const pieces = [
-      { audio: audio.subarray(0, midpoint), offset: 0 },
-      { audio: audio.subarray(midpoint), offset: midpoint / SAMPLE_RATE },
-    ];
-    const results = [];
-
-    for (const piece of pieces) {
-      try {
-        const result = await transcribePiece(transcriber, piece.audio, language, device, depth + 1);
-        results.push({ result, offset: piece.offset });
-      } catch (error) {
-        if (error instanceof BackendRetryError) throw error;
-        if (!isSkippableChunkError(error)) throw error;
-        console.warn('Vadná polovina úseku byla přeskočena:', error);
-      }
-    }
-
-    let combinedText = '';
-    const combinedChunks = [];
-
-    for (const item of results) {
-      let pieceText = cleanText(item.result?.text);
-      if (combinedText && pieceText) pieceText = removeRepeatedBoundary(combinedText, pieceText);
-      combinedText = cleanText(`${combinedText} ${pieceText}`);
-
-      for (const chunk of item.result?.chunks ?? []) {
-        combinedChunks.push({
-          ...chunk,
-          timestamp: Array.isArray(chunk.timestamp)
-            ? [
-                Number.isFinite(chunk.timestamp[0]) ? chunk.timestamp[0] + item.offset : chunk.timestamp[0],
-                Number.isFinite(chunk.timestamp[1]) ? chunk.timestamp[1] + item.offset : chunk.timestamp[1],
-              ]
-            : chunk.timestamp,
-        });
-      }
-    }
+    const left = await transcribePiece(transcriber, audio.slice(0, midpoint), language, device, depth + 1);
+    const right = await transcribePiece(transcriber, audio.slice(midpoint), language, device, depth + 1);
+    const leftText = cleanText(left.text);
+    let rightText = cleanText(right.text);
+    if (leftText && rightText) rightText = removeRepeatedBoundary(leftText, rightText);
+    const combinedText = cleanText(`${leftText} ${rightText}`);
+    const shiftedRightChunks = (right.chunks ?? []).map((chunk) => ({
+      ...chunk,
+      timestamp: Array.isArray(chunk.timestamp)
+        ? [
+            Number.isFinite(chunk.timestamp[0]) ? chunk.timestamp[0] + midpoint / SAMPLE_RATE : chunk.timestamp[0],
+            Number.isFinite(chunk.timestamp[1]) ? chunk.timestamp[1] + midpoint / SAMPLE_RATE : chunk.timestamp[1],
+          ]
+        : chunk.timestamp,
+    }));
 
     if (combinedText) {
       assertSaneText(combinedText, 'Rozdělená část přepisu');
-      return { text: combinedText, chunks: combinedChunks };
+      return {
+        text: combinedText,
+        chunks: [...(left.chunks ?? []), ...shiftedRightChunks],
+      };
     }
   }
 
-  if (device === 'webgpu') {
-    throw new BackendRetryError('WebGPU nedokázalo vytvořit použitelný přepis tohoto úseku.', lastRecoverableError);
-  }
-  if (lastRecoverableError instanceof DegenerateOutputError) throw lastRecoverableError;
-  throw new Error('Model nedokázal přepsat slyšitelný úsek.');
+  if (isSilent(audio)) return { text: '', chunks: [], silence: true };
+  throw new Error('Model nedokázal přepsat slyšitelný úsek. Zkus model Base nebo jiný backend.');
 }
 
 function normalizeChunks(chunks, chunkStart, chunkEnd, acceptFrom, fallbackText) {
@@ -520,10 +442,10 @@ function removeRepeatedBoundary(previousText, currentText) {
   const currentWords = cleanText(currentText).split(' ').filter(Boolean);
   const maximum = Math.min(12, previousWords.length, currentWords.length);
 
-  for (let wordCount = maximum; wordCount >= 2; wordCount--) {
-    const suffix = previousWords.slice(-wordCount).join(' ').toLocaleLowerCase('cs');
-    const prefix = currentWords.slice(0, wordCount).join(' ').toLocaleLowerCase('cs');
-    if (suffix === prefix) return currentWords.slice(wordCount).join(' ');
+  for (let count = maximum; count >= 2; count--) {
+    const suffix = previousWords.slice(-count).join(' ').toLocaleLowerCase('cs');
+    const prefix = currentWords.slice(0, count).join(' ').toLocaleLowerCase('cs');
+    if (suffix === prefix) return currentWords.slice(count).join(' ');
   }
   return currentWords.join(' ');
 }
@@ -553,28 +475,7 @@ function settingsFromForm() {
   };
 }
 
-async function loadWithFallback(modelId, requested) {
-  try {
-    const transcriber = await loadTranscriber(modelId, requested);
-    return { transcriber, device: requested, switched: false };
-  } catch (error) {
-    if (requested !== 'webgpu') throw error;
-    console.warn('WebGPU model se nepodařilo načíst, přepínám na WASM:', error);
-    setStatus('WebGPU se nepodařilo spustit. Pokračuji přes stabilní WASM.', 'warn');
-    setProgress(0, 'Přepínám na WASM', errorMessage(error));
-    await disposePipeline();
-    const transcriber = await loadTranscriber(modelId, 'wasm');
-    return { transcriber, device: 'wasm', switched: true };
-  }
-}
-
-async function transcribeAudio(modelId, audio, language, requested, onUpdate) {
-  const prepared = await loadWithFallback(modelId, requested);
-  let transcriber = prepared.transcriber;
-  let device = prepared.device;
-  let switchedToWasm = prepared.switched;
-  let skippedChunks = 0;
-
+async function transcribeAudio(transcriber, audio, language, device, onUpdate) {
   const chunkSamples = Math.round(CHUNK_SECONDS * SAMPLE_RATE);
   const overlapSamples = Math.round(OVERLAP_SECONDS * SAMPLE_RATE);
   const stepSamples = chunkSamples - overlapSamples;
@@ -592,41 +493,16 @@ async function transcribeAudio(modelId, audio, language, requested, onUpdate) {
     setProgress(
       completedBefore,
       'Přepisuji zvuk',
-      `${prettyTime(chunkStart)} z ${prettyTime(audioDuration)} • část ${index + 1}/${totalChunks} • ${device.toUpperCase()}`,
+      `${prettyTime(chunkStart)} z ${prettyTime(audioDuration)} • část ${index + 1} z ${totalChunks} • ${device.toUpperCase()}`,
     );
     setStatus(`Přepisuji část ${index + 1} z ${totalChunks}. Text se průběžně doplňuje.`);
 
-    let result;
-    const chunkAudio = audio.subarray(startSample, endSample);
-
-    try {
-      result = await transcribePiece(transcriber, chunkAudio, language, device);
-    } catch (error) {
-      if (device === 'webgpu') {
-        console.warn(`WebGPU selhalo v části ${index + 1}; pokračuji od stejné části přes WASM:`, error);
-        setStatus(`WebGPU selhalo v části ${index + 1}. Přepínám na WASM a tuto část zkusím znovu; hotový text zůstává.`, 'warn');
-        setProgress(completedBefore, 'Přepínám na WASM', `Pokračuji od ${prettyTime(chunkStart)}.`);
-        await disposePipeline();
-        transcriber = await loadTranscriber(modelId, 'wasm');
-        device = 'wasm';
-        switchedToWasm = true;
-
-        try {
-          result = await transcribePiece(transcriber, chunkAudio, language, device);
-        } catch (retryError) {
-          if (!isSkippableChunkError(retryError)) throw retryError;
-          console.warn(`Část ${index + 1} nešla opravit ani přes WASM a bude přeskočena:`, retryError);
-          result = { text: '', chunks: [], skipped: true };
-          skippedChunks++;
-        }
-      } else if (isSkippableChunkError(error)) {
-        console.warn(`Vadný úsek ${index + 1} byl přeskočen, přepis pokračuje:`, error);
-        result = { text: '', chunks: [], skipped: true };
-        skippedChunks++;
-      } else {
-        throw error;
-      }
-    }
+    const result = await transcribePiece(
+      transcriber,
+      audio.slice(startSample, endSample),
+      language,
+      device,
+    );
 
     const resultText = cleanText(result?.text);
     const acceptFrom = index === 0 ? chunkStart : chunkStart + OVERLAP_SECONDS;
@@ -640,6 +516,8 @@ async function transcribeAudio(modelId, audio, language, requested, onUpdate) {
     mergeSegments(segments, chunkSegments);
 
     const partialText = cleanText(segments.map((segment) => segment.text).join(' '));
+    assertSaneText(partialText, 'Průběžný přepis');
+
     const completedAfter = (chunkEnd / audioDuration) * 100;
     onUpdate({
       text: partialText,
@@ -648,19 +526,19 @@ async function transcribeAudio(modelId, audio, language, requested, onUpdate) {
       completedPercent: completedAfter,
       chunkIndex: index + 1,
       totalChunks,
-      skippedChunks,
     });
 
     setProgress(
       completedAfter,
       'Přepisuji zvuk',
-      `${prettyTime(chunkEnd)} z ${prettyTime(audioDuration)} • hotovo ${index + 1}/${totalChunks} • ${device.toUpperCase()}`,
+      `${prettyTime(chunkEnd)} z ${prettyTime(audioDuration)} • hotovo ${index + 1} z ${totalChunks} částí • ${device.toUpperCase()}`,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   const text = cleanText(segments.map((segment) => segment.text).join(' '));
-  return { text, segments, device, switchedToWasm, skippedChunks };
+  assertSaneText(text, 'Celý přepis');
+  return { text, segments };
 }
 
 function wrapCaption(text, charsPerLine, lineCount) {
@@ -770,16 +648,15 @@ function captionsToSrt(captions) {
   ).join('\n\n');
 }
 
-function renderPartial({ text, segments, completedSeconds, chunkIndex, totalChunks, skippedChunks }) {
+function renderPartial({ text, segments, completedSeconds, chunkIndex, totalChunks }) {
   const captions = buildCaptions(segments, settingsFromForm());
   txtOutput.value = text;
   srtOutput.value = captionsToSrt(captions);
-  const skippedText = skippedChunks ? ` • přeskočeno ${skippedChunks}` : '';
-  count.textContent = `${captions.length} titulků • průběžně ${chunkIndex}/${totalChunks}${skippedText}`;
+  count.textContent = `${captions.length} titulků • průběžně ${chunkIndex}/${totalChunks}`;
 
   txtOutput.scrollTop = txtOutput.scrollHeight;
   srtOutput.scrollTop = srtOutput.scrollHeight;
-  setStatus(`Průběžný přepis je zobrazen do času ${prettyTime(completedSeconds)}.`);
+  setStatus(`Průběžný přepis je zobrazen do času ${prettyTime(completedSeconds)}.`, 'warn');
 }
 
 function clearOutput(message = '0 titulků') {
@@ -799,19 +676,39 @@ function setBusy(busy) {
   }
 }
 
+async function runWithDevice(audio, modelId, language, device) {
+  const transcriber = await loadTranscriber(modelId, device);
+  return transcribeAudio(transcriber, audio, language, device, renderPartial);
+}
+
 startButton.addEventListener('click', async () => {
   if (!selectedFile) return;
   setBusy(true);
   clearOutput();
-  const startedAt = performance.now();
 
   try {
     const modelId = $('model').value;
     const language = $('language').value;
     const firstDevice = requestedDevice();
     const audio = await decodeAudio(selectedFile);
-    const result = await transcribeAudio(modelId, audio, language, firstDevice, renderPartial);
+    let result;
+    let finalDevice = firstDevice;
 
+    try {
+      result = await runWithDevice(audio, modelId, language, firstDevice);
+    } catch (error) {
+      if (firstDevice !== 'webgpu') throw error;
+
+      console.warn('WebGPU přepis selhal, opakuji přes WASM:', error);
+      setStatus('WebGPU vytvořilo chybu nebo vadný text. Přepis začíná znovu přes stabilní WASM.', 'warn');
+      setProgress(0, 'Přepínám na WASM', errorMessage(error));
+      clearOutput('Přepínám na WASM…');
+      await disposePipeline();
+      finalDevice = 'wasm';
+      result = await runWithDevice(audio, modelId, language, 'wasm');
+    }
+
+    assertSaneText(result.text, 'Výsledný přepis');
     const captions = buildCaptions(result.segments, settingsFromForm());
     if (!result.text || !captions.length) {
       throw new Error('Model nevrátil použitelný přepis. Zkus model Base nebo zkontroluj hlasitost.');
@@ -819,21 +716,17 @@ startButton.addEventListener('click', async () => {
 
     txtOutput.value = result.text;
     srtOutput.value = captionsToSrt(captions);
-    count.textContent = `${captions.length} titulků${result.skippedChunks ? ` • přeskočeno ${result.skippedChunks}` : ''}`;
+    count.textContent = `${captions.length} titulků`;
     saveSrt.disabled = false;
     saveTxt.disabled = false;
     copyButton.disabled = false;
-
-    const elapsed = (performance.now() - startedAt) / 1000;
-    const fallbackText = result.switchedToWasm ? ' • GPU→CPU fallback' : '';
-    const skippedText = result.skippedChunks ? ` • přeskočeno ${result.skippedChunks} úseků` : '';
-    setProgress(100, 'Hotovo', `${captions.length} titulků • ${result.device.toUpperCase()}${fallbackText} • ${prettyTime(elapsed)}${skippedText}`);
-    setStatus(`Hotovo. Vytvořeno ${captions.length} titulků za ${prettyTime(elapsed)}.${result.skippedChunks ? ` Přeskočeno úseků: ${result.skippedChunks}.` : ''}`, result.skippedChunks ? 'warn' : 'ok');
+    setProgress(100, 'Hotovo', `Vytvořeno ${captions.length} titulků • ${finalDevice.toUpperCase()}`);
+    setStatus(`Hotovo. Vytvořeno ${captions.length} titulků.`, 'ok');
   } catch (error) {
     console.error(error);
     stage.textContent = 'Přepis selhal';
     detail.textContent = errorMessage(error);
-    clearOutput('Přepis se nepodařil');
+    clearOutput('Výstup byl odmítnut');
     setStatus(`Přepis se nepodařil: ${errorMessage(error)}`, 'error');
   } finally {
     setBusy(false);
