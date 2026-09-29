@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MP3 → SRT – background test</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, system-ui, sans-serif; }
+    body { margin: 0; background: #f4f6f8; color: #17202a; }
+    main { max-width: 980px; margin: 0 auto; padding: 28px 18px 50px; }
+    h1 { margin: 0 0 6px; }
+    .lead { color: #667085; margin-top: 0; }
+    .notice { padding: 12px 14px; border: 1px solid #bfd3ff; background: #eef4ff; border-radius: 12px; margin: 18px 0; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .card { background: white; border: 1px solid #dde2e7; border-radius: 16px; padding: 18px; box-shadow: 0 4px 18px rgba(0,0,0,.04); }
+    .stack { display: grid; gap: 14px; }
+    label { display: grid; gap: 6px; font-weight: 650; }
+    input, select, button, textarea { font: inherit; }
+    input[type=file], select, input[type=number] { padding: 10px; border: 1px solid #cfd5dc; border-radius: 10px; background: white; color: inherit; }
+    audio { width: 100%; }
+    button { border: 0; border-radius: 10px; padding: 11px 14px; cursor: pointer; background: #1d4ed8; color: white; font-weight: 700; }
+    button:disabled { opacity: .45; cursor: default; }
+    .secondary { background: #475467; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .status { min-height: 48px; color: #475467; }
+    .status[data-kind="ok"] { color: #067647; }
+    .status[data-kind="warn"] { color: #b54708; }
+    .status[data-kind="error"] { color: #b42318; }
+    progress { width: 100%; height: 16px; }
+    .progresshead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .percent { font-size: 1.45rem; font-weight: 800; }
+    .small { color: #667085; font-size: .9rem; }
+    textarea { width: 100%; min-height: 260px; box-sizing: border-box; resize: vertical; padding: 12px; border: 1px solid #cfd5dc; border-radius: 10px; background: #fbfcfd; color: inherit; }
+    .buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    @media (prefers-color-scheme: dark) {
+      body { background: #101828; color: #eaecf0; }
+      .card { background: #1d2939; border-color: #344054; }
+      .lead, .small, .status { color: #98a2b3; }
+      .notice { background: #162a4a; border-color: #315b9c; }
+      input[type=file], select, input[type=number], textarea { background: #101828; border-color: #475467; color: #eaecf0; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>MP3 → SRT</h1>
+    <p class="lead">Test přepisu ve Web Workeru – určený právě pro ověření běhu v neaktivní záložce.</p>
+
+    <div class="notice"><strong>Test:</strong> nahraj MP3, spusť přepis a po začátku přepisu přepni na jinou záložku. Ostrá verze aplikace tímto testem není změněná.</div>
+
+    <div class="grid">
+      <section class="card stack">
+        <label>Zvukový soubor
+          <input id="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac">
+        </label>
+        <div>
+          <strong id="filename">Žádný soubor</strong>
+          <div class="small" id="filemeta"></div>
+        </div>
+        <audio id="preview" controls></audio>
+
+        <div class="row">
+          <label>Model
+            <select id="model">
+              <option value="onnx-community/whisper-tiny">Tiny – nejrychlejší</option>
+              <option value="onnx-community/whisper-base" selected>Base – doporučeno</option>
+              <option value="onnx-community/whisper-small">Small – nejpřesnější</option>
+            </select>
+          </label>
+          <label>Jazyk
+            <select id="language">
+              <option value="slovak" selected>Slovenština</option>
+              <option value="czech">Čeština</option>
+              <option value="">Automaticky</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label>Výpočet
+            <select id="device">
+              <option value="auto" selected>Automaticky – WASM</option>
+              <option value="webgpu">WebGPU</option>
+              <option value="wasm">WASM</option>
+            </select>
+          </label>
+          <label>Max. délka titulku
+            <select id="maxdur">
+              <option value="4.5">4,5 s</option>
+              <option value="5.5" selected>5,5 s</option>
+              <option value="7">7 s</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label>Znaků na řádek
+            <input id="chars" type="number" min="24" max="60" value="42">
+          </label>
+          <label>Počet řádků
+            <select id="lines">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+            </select>
+          </label>
+        </div>
+
+        <button id="start" disabled>Spustit přepis ve workeru</button>
+        <div id="status" class="status">Vyber zvukový soubor.</div>
+        <div class="progresshead"><span id="detail">Připraveno</span><span id="percent" class="percent">0 %</span></div>
+        <progress id="progress" max="100" value="0"></progress>
+      </section>
+
+      <section class="card stack">
+        <h2>Výstup</h2>
+        <label>SRT
+          <textarea id="srt" spellcheck="false"></textarea>
+        </label>
+        <label>Čistý text
+          <textarea id="txt" spellcheck="false"></textarea>
+        </label>
+        <div class="buttons">
+          <button id="saveSrt" disabled>Stáhnout SRT</button>
+          <button id="saveTxt" class="secondary" disabled>Stáhnout TXT</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
