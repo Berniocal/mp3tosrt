@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MP3 → SRT – fronta (test)</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #0d1220; }
+    iframe { display: block; width: 100%; height: 100vh; border: 0; }
+  </style>
+</head>
+<body>
+  <iframe id="app" src="./index.html" title="MP3 → SRT"></iframe>
+
+  <script>
+    const frame = document.getElementById('app');
+
+    frame.addEventListener('load', () => {
+      const w = frame.contentWindow;
+      const d = frame.contentDocument;
+      const fileInput = d.getElementById('file');
+      const drop = d.getElementById('drop');
+      const fileBox = d.getElementById('filebox');
+      const startButton = d.getElementById('start');
+      const statusBox = d.getElementById('status');
+      const saveSrt = d.getElementById('saveSrt');
+      const srtOutput = d.getElementById('srt');
+
+      if (!fileInput || !drop || !startButton || !statusBox || !saveSrt || !srtOutput) return;
+
+      fileInput.multiple = true;
+      const dropTitle = drop.querySelector('strong');
+      const dropNote = drop.querySelector('span');
+      if (dropTitle) dropTitle.textContent = 'Vyber jeden nebo více MP3 souborů';
+      if (dropNote) dropNote.textContent = 'Soubory se zpracují postupně a každý hotový SRT se automaticky stáhne.';
+
+      const queueBox = d.createElement('div');
+      queueBox.className = 'status';
+      queueBox.style.minHeight = '0';
+      queueBox.style.display = 'none';
+      fileBox.insertAdjacentElement('afterend', queueBox);
+
+      let queue = [];
+      let currentIndex = 0;
+      let running = false;
+      let handlingResult = false;
+      let internalChange = false;
+      let internalStart = false;
+      const results = [];
+
+      const isAudio = (file) => file && (
+        file.type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|flac)$/i.test(file.name)
+      );
+
+      function renderQueue(extra = '') {
+        if (!queue.length) {
+          queueBox.style.display = 'none';
+          return;
+        }
+
+        queueBox.style.display = 'block';
+        const current = Math.min(currentIndex + 1, queue.length);
+        const finished = results.filter((item) => item === 'ok').length;
+        const failed = results.filter((item) => item === 'error').length;
+        const currentName = queue[currentIndex]?.name ?? '';
+        const state = running
+          ? `Zpracovávám ${current}/${queue.length}: ${currentName}`
+          : `Ve frontě: ${queue.length} souborů`;
+        const summary = results.length ? ` • hotovo ${finished}${failed ? `, chyby ${failed}` : ''}` : '';
+        queueBox.textContent = `${state}${summary}${extra ? ` • ${extra}` : ''}`;
+      }
+
+      function setQueue(files) {
+        queue = Array.from(files || []).filter(isAudio);
+        currentIndex = 0;
+        running = false;
+        handlingResult = false;
+        results.length = 0;
+        renderQueue(queue.length > 1 ? 'prohlížeč může požádat o povolení více automatických stahování' : '');
+        startButton.textContent = queue.length > 1 ? `Vytvořit titulky (${queue.length} souborů)` : 'Vytvořit titulky';
+      }
+
+      fileInput.addEventListener('change', () => {
+        if (internalChange) return;
+        setQueue(fileInput.files);
+      });
+
+      drop.addEventListener('drop', (event) => {
+        if (internalChange) return;
+        setQueue(event.dataTransfer?.files);
+      });
+
+      startButton.addEventListener('click', () => {
+        if (internalStart) return;
+        if (!queue.length && fileInput.files?.length) setQueue(fileInput.files);
+        if (!queue.length) return;
+        currentIndex = 0;
+        results.length = 0;
+        running = true;
+        handlingResult = false;
+        renderQueue('automatické stahování SRT je zapnuté');
+      });
+
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      function safeBaseName(name) {
+        return (name || 'prepis')
+          .replace(/\.[^.]+$/, '')
+          .replace(/[\\/:*?"<>|]+/g, '_');
+      }
+
+      async function forceDownloadCurrentSrt() {
+        const content = srtOutput.value;
+        if (!content.trim()) throw new Error('SRT je prázdné.');
+
+        // Použijeme stejný mechanismus jako tlačítko „Stáhnout SRT“ v aplikaci.
+        // Kdyby se změnila implementace aplikace, máme ještě přímou zálohu.
+        if (!saveSrt.disabled) {
+          saveSrt.click();
+          return;
+        }
+
+        const blob = new Blob(['\ufeff', content], { type: 'application/x-subrip;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = d.createElement('a');
+        anchor.href = url;
+        anchor.download = `${safeBaseName(queue[currentIndex]?.name)}.srt`;
+        d.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      async function loadAndStart(index) {
+        const file = queue[index];
+        if (!file) return;
+
+        const transfer = new w.DataTransfer();
+        transfer.items.add(file);
+        internalChange = true;
+        fileInput.files = transfer.files;
+        fileInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+        internalChange = false;
+
+        await delay(250);
+        internalStart = true;
+        startButton.click();
+        internalStart = false;
+      }
+
+      async function advance() {
+        currentIndex += 1;
+        if (currentIndex >= queue.length) {
+          running = false;
+          handlingResult = false;
+          const failed = results.filter((item) => item === 'error').length;
+          renderQueue(failed ? `fronta dokončena, ${failed} souborů selhalo` : 'fronta dokončena');
+          startButton.textContent = queue.length > 1 ? `Spustit frontu znovu (${queue.length})` : 'Vytvořit titulky';
+          return;
+        }
+
+        renderQueue('načítám další soubor');
+        await delay(500);
+        handlingResult = false;
+        await loadAndStart(currentIndex);
+      }
+
+      async function handleSuccess() {
+        if (!running || handlingResult) return;
+        handlingResult = true;
+        try {
+          await forceDownloadCurrentSrt();
+          results[currentIndex] = 'ok';
+          renderQueue(`SRT ${currentIndex + 1}/${queue.length} staženo`);
+        } catch (error) {
+          console.error('Automatické stažení SRT selhalo:', error);
+          results[currentIndex] = 'error';
+          renderQueue(`stažení SRT selhalo: ${error.message || error}`);
+        }
+        await advance();
+      }
+
+      async function handleFailure() {
+        if (!running || handlingResult) return;
+        handlingResult = true;
+        results[currentIndex] = 'error';
+        renderQueue(`soubor ${currentIndex + 1}/${queue.length} se nepodařilo přepsat, pokračuji`);
+        await advance();
+      }
+
+      const observer = new w.MutationObserver(() => {
+        if (!running) return;
+        const text = statusBox.textContent.trim();
+        const kind = statusBox.dataset.kind;
+        if (kind === 'ok' && /^Hotovo\./.test(text)) {
+          handleSuccess();
+        } else if (kind === 'error' && /^Přepis se nepodařil:/.test(text)) {
+          handleFailure();
+        }
+      });
+
+      observer.observe(statusBox, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['data-kind'],
+      });
+    });
+  </script>
+</body>
+</html>
