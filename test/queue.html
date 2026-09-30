@@ -10,7 +10,7 @@
   </style>
 </head>
 <body>
-  <iframe id="app" src="./index.html" title="MP3 → SRT"></iframe>
+  <iframe id="app" src="../index.html" title="MP3 → SRT"></iframe>
 
   <script>
     const frame = document.getElementById('app');
@@ -113,8 +113,6 @@
         const content = srtOutput.value;
         if (!content.trim()) throw new Error('SRT je prázdné.');
 
-        // Použijeme stejný mechanismus jako tlačítko „Stáhnout SRT“ v aplikaci.
-        // Kdyby se změnila implementace aplikace, máme ještě přímou zálohu.
         if (!saveSrt.disabled) {
           saveSrt.click();
           return;
