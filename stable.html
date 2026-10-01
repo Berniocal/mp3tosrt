@@ -76,47 +76,10 @@
     })();
   </script>
   <script type="module">
-    const response = await fetch('./app.js?v=20260728-5');
+    const response = await fetch('./app.js?v=20261001-stall-fix');
     let source = await response.text();
 
     const patches = [
-      [
-`  } catch (error) {
-    if (error instanceof DegenerateOutputError) {
-      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
-      throw error;
-    }
-    if (!isRecoverableDecodeError(error)) throw error;
-    timestampError = error;
-  }`,
-`  } catch (error) {
-    if (error instanceof DegenerateOutputError) {
-      console.warn('Opakující se výstup s časováním; zkouším bezpečnější režim a menší části:', error);
-      timestampError = error;
-    } else {
-      if (!isRecoverableDecodeError(error)) throw error;
-      timestampError = error;
-    }
-  }`
-      ],
-      [
-`  } catch (error) {
-    if (error instanceof DegenerateOutputError) {
-      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
-      throw error;
-    }
-    if (!isRecoverableDecodeError(error)) throw error;
-    if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
-  }`,
-`  } catch (error) {
-    if (error instanceof DegenerateOutputError) {
-      console.warn('Opakující se výstup bez časování; dělím úsek na menší části:', error);
-    } else {
-      if (!isRecoverableDecodeError(error)) throw error;
-      if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
-    }
-  }`
-      ],
       [
 `    const left = await transcribePiece(transcriber, audio.slice(0, midpoint), language, device, depth + 1);
     const right = await transcribePiece(transcriber, audio.slice(midpoint), language, device, depth + 1);`,
