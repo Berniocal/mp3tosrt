@@ -9,6 +9,7 @@ const CHUNK_SECONDS = 25;
 const OVERLAP_SECONDS = 1.5;
 const MIN_SPLIT_SECONDS = 5.5;
 const MAX_SPLIT_DEPTH = 2;
+const MAX_NEW_TOKENS = 128;
 
 const $ = (id) => document.getElementById(id);
 const fileInput = $('file');
@@ -326,6 +327,9 @@ function transcriberOptions(language, timestamps) {
   const options = {
     task: 'transcribe',
     force_full_sequences: false,
+    // Prevent Whisper from getting stuck in a very long repetition loop on a
+    // difficult piece of audio. A normal 25 s speech chunk fits comfortably.
+    max_new_tokens: MAX_NEW_TOKENS,
   };
   if (timestamps) options.return_timestamps = true;
   if (language) options.language = language;
@@ -336,6 +340,7 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
   if (isSilent(audio)) return { text: '', chunks: [], silence: true };
 
   let timestampError = null;
+  let splitImmediately = false;
   try {
     const result = await transcriber(audio, transcriberOptions(language, true));
     const text = cleanText(result?.text);
@@ -345,35 +350,46 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
     }
   } catch (error) {
     if (error instanceof DegenerateOutputError) {
-      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
-      throw error;
+      // The token limit guarantees that generation returns. If its result is
+      // still repetitive, do not run the same full piece again without
+      // timestamps; split it into shorter pieces below.
+      timestampError = error;
+      splitImmediately = true;
+    } else {
+      if (!isRecoverableDecodeError(error)) throw error;
+      timestampError = error;
     }
-    if (!isRecoverableDecodeError(error)) throw error;
-    timestampError = error;
   }
 
   if (device === 'webgpu' && timestampError && /token_ids must be a non-empty array/i.test(errorMessage(timestampError))) {
     throw new BackendRetryError('WebGPU vrátil prázdné tokeny.', timestampError);
   }
 
-  try {
-    const result = await transcriber(audio, transcriberOptions(language, false));
-    const text = cleanText(result?.text);
-    if (text) {
-      assertSaneText(text, 'Část přepisu');
-      return result;
+  if (!splitImmediately) {
+    try {
+      const result = await transcriber(audio, transcriberOptions(language, false));
+      const text = cleanText(result?.text);
+      if (text) {
+        assertSaneText(text, 'Část přepisu');
+        return result;
+      }
+    } catch (error) {
+      if (error instanceof DegenerateOutputError) {
+        timestampError = error;
+        splitImmediately = true;
+      } else {
+        if (!isRecoverableDecodeError(error)) throw error;
+        timestampError = error;
+        if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
+      }
     }
-  } catch (error) {
-    if (error instanceof DegenerateOutputError) {
-      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
-      throw error;
-    }
-    if (!isRecoverableDecodeError(error)) throw error;
-    if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
   }
 
   const minimumSamples = Math.round(MIN_SPLIT_SECONDS * SAMPLE_RATE);
   if (depth < MAX_SPLIT_DEPTH && audio.length >= minimumSamples * 2) {
+    if (splitImmediately) {
+      setStatus('Model se na části zvuku začal opakovat. Automaticky ji dělím na kratší úseky…', 'warn');
+    }
     const midpoint = Math.floor(audio.length / 2);
     const left = await transcribePiece(transcriber, audio.slice(0, midpoint), language, device, depth + 1);
     const right = await transcribePiece(transcriber, audio.slice(midpoint), language, device, depth + 1);
@@ -401,6 +417,7 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
   }
 
   if (isSilent(audio)) return { text: '', chunks: [], silence: true };
+  if (timestampError instanceof DegenerateOutputError) throw timestampError;
   throw new Error('Model nedokázal přepsat slyšitelný úsek. Zkus model Base nebo jiný backend.');
 }
 
