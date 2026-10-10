@@ -9,6 +9,7 @@ const CHUNK_SECONDS = 25;
 const OVERLAP_SECONDS = 1.5;
 const MIN_SPLIT_SECONDS = 5.5;
 const MAX_SPLIT_DEPTH = 2;
+const MAX_NEW_TOKENS = 128;
 
 const $ = (id) => document.getElementById(id);
 const fileInput = $('file');
@@ -37,124 +38,6 @@ let audioDuration = 0;
 let currentPipeline = null;
 let currentPipelineKey = '';
 let activeTab = 'srt';
-
-let wakeLock = null;
-let keepAwakeActive = false;
-let keepAwakeVideo = null;
-let keepAwakeCanvas = null;
-let keepAwakeStream = null;
-let keepAwakeTimer = null;
-
-function ensureKeepAwakeVideo() {
-  if (keepAwakeVideo) return keepAwakeVideo;
-
-  const video = document.createElement('video');
-  video.muted = true;
-  video.playsInline = true;
-  video.loop = true;
-  video.setAttribute('aria-hidden', 'true');
-  Object.assign(video.style, {
-    position: 'fixed',
-    width: '1px',
-    height: '1px',
-    left: '0',
-    bottom: '0',
-    opacity: '0.001',
-    pointerEvents: 'none',
-    zIndex: '-1',
-  });
-  document.body.appendChild(video);
-  keepAwakeVideo = video;
-  return video;
-}
-
-function startOnePixelVideo() {
-  try {
-    const video = ensureKeepAwakeVideo();
-
-    if (!keepAwakeStream && typeof HTMLCanvasElement !== 'undefined') {
-      keepAwakeCanvas = document.createElement('canvas');
-      keepAwakeCanvas.width = 1;
-      keepAwakeCanvas.height = 1;
-      const context = keepAwakeCanvas.getContext('2d');
-
-      let phase = false;
-      const drawFrame = () => {
-        if (!context) return;
-        context.fillStyle = phase ? '#000' : '#010101';
-        context.fillRect(0, 0, 1, 1);
-        phase = !phase;
-      };
-
-      drawFrame();
-      keepAwakeTimer = window.setInterval(drawFrame, 1000);
-
-      if (typeof keepAwakeCanvas.captureStream === 'function') {
-        keepAwakeStream = keepAwakeCanvas.captureStream(1);
-        video.srcObject = keepAwakeStream;
-      }
-    }
-
-    const playPromise = video.play();
-    if (playPromise?.catch) playPromise.catch(() => {});
-  } catch (error) {
-    console.warn('1px keep-awake video se nepodařilo spustit:', error);
-  }
-}
-
-async function requestWakeLock() {
-  if (!keepAwakeActive || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
-  try {
-    if (!wakeLock || wakeLock.released) {
-      wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', () => {
-        wakeLock = null;
-      }, { once: true });
-    }
-  } catch (error) {
-    console.warn('Screen Wake Lock není dostupný:', error);
-  }
-}
-
-async function startKeepAwake() {
-  keepAwakeActive = true;
-  // Video se spouští přímo z kliknutí uživatele; funguje jako záloha tam,
-  // kde Screen Wake Lock není dostupný nebo je systémem uvolněn.
-  startOnePixelVideo();
-  await requestWakeLock();
-}
-
-async function stopKeepAwake() {
-  keepAwakeActive = false;
-
-  if (wakeLock) {
-    try { await wakeLock.release(); } catch (_) {}
-    wakeLock = null;
-  }
-
-  if (keepAwakeTimer !== null) {
-    clearInterval(keepAwakeTimer);
-    keepAwakeTimer = null;
-  }
-
-  if (keepAwakeVideo) {
-    try { keepAwakeVideo.pause(); } catch (_) {}
-    keepAwakeVideo.srcObject = null;
-  }
-
-  if (keepAwakeStream) {
-    for (const track of keepAwakeStream.getTracks()) track.stop();
-    keepAwakeStream = null;
-  }
-
-  keepAwakeCanvas = null;
-}
-
-document.addEventListener('visibilitychange', () => {
-  if (!keepAwakeActive || document.visibilityState !== 'visible') return;
-  startOnePixelVideo();
-  void requestWakeLock();
-});
 
 class DegenerateOutputError extends Error {
   constructor(message) {
@@ -444,6 +327,9 @@ function transcriberOptions(language, timestamps) {
   const options = {
     task: 'transcribe',
     force_full_sequences: false,
+    // Prevent Whisper from getting stuck in a very long repetition loop on a
+    // difficult piece of audio. A normal 25 s speech chunk fits comfortably.
+    max_new_tokens: MAX_NEW_TOKENS,
   };
   if (timestamps) options.return_timestamps = true;
   if (language) options.language = language;
@@ -454,6 +340,7 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
   if (isSilent(audio)) return { text: '', chunks: [], silence: true };
 
   let timestampError = null;
+  let splitImmediately = false;
   try {
     const result = await transcriber(audio, transcriberOptions(language, true));
     const text = cleanText(result?.text);
@@ -463,35 +350,46 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
     }
   } catch (error) {
     if (error instanceof DegenerateOutputError) {
-      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
-      throw error;
+      // The token limit guarantees that generation returns. If its result is
+      // still repetitive, do not run the same full piece again without
+      // timestamps; split it into shorter pieces below.
+      timestampError = error;
+      splitImmediately = true;
+    } else {
+      if (!isRecoverableDecodeError(error)) throw error;
+      timestampError = error;
     }
-    if (!isRecoverableDecodeError(error)) throw error;
-    timestampError = error;
   }
 
   if (device === 'webgpu' && timestampError && /token_ids must be a non-empty array/i.test(errorMessage(timestampError))) {
     throw new BackendRetryError('WebGPU vrátil prázdné tokeny.', timestampError);
   }
 
-  try {
-    const result = await transcriber(audio, transcriberOptions(language, false));
-    const text = cleanText(result?.text);
-    if (text) {
-      assertSaneText(text, 'Část přepisu');
-      return result;
+  if (!splitImmediately) {
+    try {
+      const result = await transcriber(audio, transcriberOptions(language, false));
+      const text = cleanText(result?.text);
+      if (text) {
+        assertSaneText(text, 'Část přepisu');
+        return result;
+      }
+    } catch (error) {
+      if (error instanceof DegenerateOutputError) {
+        timestampError = error;
+        splitImmediately = true;
+      } else {
+        if (!isRecoverableDecodeError(error)) throw error;
+        timestampError = error;
+        if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
+      }
     }
-  } catch (error) {
-    if (error instanceof DegenerateOutputError) {
-      if (device === 'webgpu') throw new BackendRetryError(error.message, error);
-      throw error;
-    }
-    if (!isRecoverableDecodeError(error)) throw error;
-    if (device === 'webgpu') throw new BackendRetryError('WebGPU nedokázal dekódovat část zvuku.', error);
   }
 
   const minimumSamples = Math.round(MIN_SPLIT_SECONDS * SAMPLE_RATE);
   if (depth < MAX_SPLIT_DEPTH && audio.length >= minimumSamples * 2) {
+    if (splitImmediately) {
+      setStatus('Model se na části zvuku začal opakovat. Automaticky ji dělím na kratší úseky…', 'warn');
+    }
     const midpoint = Math.floor(audio.length / 2);
     const left = await transcribePiece(transcriber, audio.slice(0, midpoint), language, device, depth + 1);
     const right = await transcribePiece(transcriber, audio.slice(midpoint), language, device, depth + 1);
@@ -519,6 +417,7 @@ async function transcribePiece(transcriber, audio, language, device, depth = 0) 
   }
 
   if (isSilent(audio)) return { text: '', chunks: [], silence: true };
+  if (timestampError instanceof DegenerateOutputError) throw timestampError;
   throw new Error('Model nedokázal přepsat slyšitelný úsek. Zkus model Base nebo jiný backend.');
 }
 
@@ -803,7 +702,6 @@ startButton.addEventListener('click', async () => {
   if (!selectedFile) return;
   setBusy(true);
   clearOutput();
-  await startKeepAwake();
 
   try {
     const modelId = $('model').value;
@@ -848,7 +746,6 @@ startButton.addEventListener('click', async () => {
     clearOutput('Výstup byl odmítnut');
     setStatus(`Přepis se nepodařil: ${errorMessage(error)}`, 'error');
   } finally {
-    await stopKeepAwake();
     setBusy(false);
   }
 });
