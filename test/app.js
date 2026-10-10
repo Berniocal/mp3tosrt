@@ -38,6 +38,124 @@ let currentPipeline = null;
 let currentPipelineKey = '';
 let activeTab = 'srt';
 
+let wakeLock = null;
+let keepAwakeActive = false;
+let keepAwakeVideo = null;
+let keepAwakeCanvas = null;
+let keepAwakeStream = null;
+let keepAwakeTimer = null;
+
+function ensureKeepAwakeVideo() {
+  if (keepAwakeVideo) return keepAwakeVideo;
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.loop = true;
+  video.setAttribute('aria-hidden', 'true');
+  Object.assign(video.style, {
+    position: 'fixed',
+    width: '1px',
+    height: '1px',
+    left: '0',
+    bottom: '0',
+    opacity: '0.001',
+    pointerEvents: 'none',
+    zIndex: '-1',
+  });
+  document.body.appendChild(video);
+  keepAwakeVideo = video;
+  return video;
+}
+
+function startOnePixelVideo() {
+  try {
+    const video = ensureKeepAwakeVideo();
+
+    if (!keepAwakeStream && typeof HTMLCanvasElement !== 'undefined') {
+      keepAwakeCanvas = document.createElement('canvas');
+      keepAwakeCanvas.width = 1;
+      keepAwakeCanvas.height = 1;
+      const context = keepAwakeCanvas.getContext('2d');
+
+      let phase = false;
+      const drawFrame = () => {
+        if (!context) return;
+        context.fillStyle = phase ? '#000' : '#010101';
+        context.fillRect(0, 0, 1, 1);
+        phase = !phase;
+      };
+
+      drawFrame();
+      keepAwakeTimer = window.setInterval(drawFrame, 1000);
+
+      if (typeof keepAwakeCanvas.captureStream === 'function') {
+        keepAwakeStream = keepAwakeCanvas.captureStream(1);
+        video.srcObject = keepAwakeStream;
+      }
+    }
+
+    const playPromise = video.play();
+    if (playPromise?.catch) playPromise.catch(() => {});
+  } catch (error) {
+    console.warn('1px keep-awake video se nepodařilo spustit:', error);
+  }
+}
+
+async function requestWakeLock() {
+  if (!keepAwakeActive || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
+  try {
+    if (!wakeLock || wakeLock.released) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+      }, { once: true });
+    }
+  } catch (error) {
+    console.warn('Screen Wake Lock není dostupný:', error);
+  }
+}
+
+async function startKeepAwake() {
+  keepAwakeActive = true;
+  // Video se spouští přímo z kliknutí uživatele; funguje jako záloha tam,
+  // kde Screen Wake Lock není dostupný nebo je systémem uvolněn.
+  startOnePixelVideo();
+  await requestWakeLock();
+}
+
+async function stopKeepAwake() {
+  keepAwakeActive = false;
+
+  if (wakeLock) {
+    try { await wakeLock.release(); } catch (_) {}
+    wakeLock = null;
+  }
+
+  if (keepAwakeTimer !== null) {
+    clearInterval(keepAwakeTimer);
+    keepAwakeTimer = null;
+  }
+
+  if (keepAwakeVideo) {
+    try { keepAwakeVideo.pause(); } catch (_) {}
+    keepAwakeVideo.srcObject = null;
+  }
+
+  if (keepAwakeStream) {
+    for (const track of keepAwakeStream.getTracks()) track.stop();
+    keepAwakeStream = null;
+  }
+
+  keepAwakeCanvas = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!keepAwakeActive || document.visibilityState !== 'visible') return;
+  startOnePixelVideo();
+  void requestWakeLock();
+});
+
 class DegenerateOutputError extends Error {
   constructor(message) {
     super(message);
@@ -685,6 +803,7 @@ startButton.addEventListener('click', async () => {
   if (!selectedFile) return;
   setBusy(true);
   clearOutput();
+  await startKeepAwake();
 
   try {
     const modelId = $('model').value;
@@ -729,6 +848,7 @@ startButton.addEventListener('click', async () => {
     clearOutput('Výstup byl odmítnut');
     setStatus(`Přepis se nepodařil: ${errorMessage(error)}`, 'error');
   } finally {
+    await stopKeepAwake();
     setBusy(false);
   }
 });
