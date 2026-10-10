@@ -271,25 +271,42 @@
   <script>
     (() => {
       const originalFetch = window.fetch.bind(window);
+
       window.fetch = (input, init) => {
         const sourceUrl = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
-        const gpuSelected = document.getElementById('device')?.value === 'webgpu';
-
-        if (!gpuSelected || !sourceUrl || !sourceUrl.includes('/onnx-community/whisper-')) {
+        if (!sourceUrl || !sourceUrl.includes('/onnx-community/whisper-')) {
           return originalFetch(input, init);
         }
 
-        const fp16Url = sourceUrl.replace(/_q4\.onnx(?=\?|$)/i, '_fp16.onnx');
-        if (fp16Url === sourceUrl) return originalFetch(input, init);
+        const selectedDevice = document.getElementById('device')?.value ?? 'auto';
+        let safeUrl = sourceUrl;
 
-        console.info('Whisper WebGPU test: FP16 místo vadného Q4 grafu:', fp16Url.split('/').pop());
-        if (input instanceof Request) {
-          return originalFetch(new Request(fp16Url, input), init);
+        if (selectedDevice === 'webgpu') {
+          // WebGPU: používej FP16 a nepouštěj vadné Q4/Q8 grafy.
+          safeUrl = safeUrl
+            .replace(/_(?:q4|q8|quantized|int8|uint8)\.onnx(?=\?|$)/i, '_fp16.onnx');
+        } else {
+          // Automaticky/WASM: používej stabilní nekvantované ONNX grafy.
+          safeUrl = safeUrl
+            .replace(/_(?:q4|q8|quantized|int8|uint8)\.onnx(?=\?|$)/i, '.onnx');
         }
-        return originalFetch(fp16Url, init);
+
+        if (safeUrl === sourceUrl) return originalFetch(input, init);
+
+        console.info(
+          'Whisper: obcházím vadný kvantovaný graf:',
+          sourceUrl.split('/').pop(),
+          '→',
+          safeUrl.split('/').pop(),
+        );
+
+        if (input instanceof Request) {
+          return originalFetch(new Request(safeUrl, input), init);
+        }
+        return originalFetch(safeUrl, init);
       };
     })();
   </script>
-  <script type="module" src="./app.js?v=20261010-wakelock1"></script>
+  <script type="module" src="./app.js?v=20261010-wakelock2"></script>
 </body>
 </html>
